@@ -1,0 +1,56 @@
+{
+  "name": "multiplayer-site",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multiplayer board games platform with Sequence, Quoridor, Connect 4, and Rock Paper Scissors",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:web": "pnpm --filter @multiplayer/web dev",
+    "dev:server": "pnpm --filter @multiplayer/server dev",
+    "build": "pnpm -r build",
+    "build:web": "pnpm --filter @multiplayer/web build",
+    "build:server": "pnpm --filter @multiplayer/server build",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "eslint": "^8.55.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.1.0",
+    "@vitest/coverage-v8": "^1.1.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "pnpm": {
+    "overrides": {
+      "@colyseus/core": "0.16.5",
+      "@colyseus/ws-transport": "0.16.5",
+      "colyseus": "0.16.5",
+      "colyseus.js": "0.16.22",
+      "@colyseus/schema": "3.0.70"
+    }
+  }
+}
+

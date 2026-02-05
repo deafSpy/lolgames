@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-outfit: "Outfit", system-ui, sans-serif;
+  --font-space-grotesk: "Space Grotesk", system-ui, sans-serif;
+  --font-jetbrains-mono: "JetBrains Mono", monospace;
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-surface-950 text-surface-100;
+    background-image: radial-gradient(
+        circle at 50% 0%,
+        rgba(37, 166, 180, 0.08) 0%,
+        transparent 50%
+      ),
+      radial-gradient(circle at 0% 100%, rgba(251, 191, 36, 0.05) 0%, transparent 30%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-900;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-600 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-500;
+  }
+}
+
+@layer components {
+  /* Card styles */
+  .card {
+    @apply bg-surface-900/80 backdrop-blur-sm rounded-2xl border border-surface-800/50;
+    @apply shadow-card hover:shadow-card-hover transition-shadow duration-200;
+  }
+
+  .card-interactive {
+    @apply card cursor-pointer;
+    @apply hover:border-primary-500/30 hover:bg-surface-800/80;
+    @apply transition-all duration-200;
+  }
+
+  /* Button base */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2;
+    @apply px-4 py-2 rounded-xl font-medium;
+    @apply transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface-950;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-500 text-white;
+    @apply hover:bg-primary-400 active:bg-primary-600;
+    @apply focus:ring-primary-500;
+    @apply shadow-glow hover:shadow-glow;
+  }
+
+  .btn-secondary {
+    @apply btn bg-surface-700 text-surface-100;
+    @apply hover:bg-surface-600 active:bg-surface-800;
+    @apply focus:ring-surface-500;
+    @apply border border-surface-600;
+  }
+
+  .btn-accent {
+    @apply btn bg-accent-500 text-surface-950;
+    @apply hover:bg-accent-400 active:bg-accent-600;
+    @apply focus:ring-accent-500;
+    @apply shadow-glow-accent;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-surface-300;
+    @apply hover:bg-surface-800 hover:text-surface-100;
+    @apply focus:ring-surface-500;
+  }
+
+  /* Input styles */
+  .input {
+    @apply w-full px-4 py-3 rounded-xl;
+    @apply bg-surface-800 border border-surface-700;
+    @apply text-surface-100 placeholder:text-surface-500;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+    @apply transition-all duration-200;
+  }
+
+  /* Game board grid pattern */
+  .game-board {
+    @apply bg-surface-900/50;
+    background-image: var(--tw-gradient-stops);
+    background-size: 40px 40px;
+  }
+
+  /* Glow effects */
+  .glow {
+    @apply relative;
+  }
+
+  .glow::after {
+    content: "";
+    @apply absolute inset-0 rounded-inherit opacity-0;
+    @apply bg-gradient-to-r from-primary-500/20 to-accent-500/20;
+    @apply blur-xl transition-opacity duration-300;
+    z-index: -1;
+  }
+
+  .glow:hover::after {
+    @apply opacity-100;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .rounded-inherit {
+    border-radius: inherit;
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent;
+  }
+
+  /* Glass effect */
+  .glass {
+    @apply bg-surface-900/60 backdrop-blur-md;
+    @apply border border-surface-700/50;
+  }
+}
+
