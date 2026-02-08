@@ -9,6 +9,7 @@ export interface AuthUser {
   displayName?: string;
   provider?: string;
   verified?: boolean;
+  avatarUrl?: string;
 }
 
 interface AuthState {
@@ -32,7 +33,11 @@ function getAuthClient() {
   }
   return (client as any).auth as {
     token?: string;
-    registerWithEmailAndPassword: (email: string, password: string, options?: Record<string, unknown>) => Promise<AuthUser>;
+    registerWithEmailAndPassword: (
+      email: string,
+      password: string,
+      options?: Record<string, unknown>
+    ) => Promise<AuthUser>;
     signInWithEmailAndPassword: (email: string, password: string) => Promise<AuthUser>;
     signInWithProvider: (provider: string) => Promise<AuthUser>;
     getUserData: () => Promise<AuthUser>;
@@ -47,13 +52,37 @@ export const useAuthStore = create<AuthState>((set) => ({
   error: null,
 
   load: async () => {
+    console.log("🔍 Auth load - STARTING");
     set({ isLoading: true, error: null });
     try {
       const auth = getAuthClient();
-      const user = await auth.getUserData();
+      console.log("🔍 Auth load - Got auth client, calling getUserData");
+      let user = await auth.getUserData();
+
+      console.log("🔍 Auth load - RAW user data:", JSON.stringify(user, null, 2));
+
+      // FIX: If user is wrapped in a 'user' property, unwrap it
+      if (user && typeof user === "object" && "user" in user && !("email" in user)) {
+        console.log("🔍 Auth load - Unwrapping nested user object");
+        console.log(
+          "🔍 Auth load - Nested user value:",
+          JSON.stringify((user as any).user, null, 2)
+        );
+        user = (user as any).user;
+      }
+
+      console.log("🔍 Auth load - FINAL User data received:", {
+        id: user?.id,
+        email: user?.email,
+        displayName: user?.displayName,
+        verified: user?.verified,
+        provider: user?.provider,
+        avatarUrl: user?.avatarUrl,
+        fullObject: user,
+      });
       set({ user, token: auth.token || null, isLoading: false });
     } catch (error) {
-      console.warn("Auth load failed, continuing as guest", error);
+      console.warn("🔍 Auth load failed:", error);
       set({ user: null, token: null, isLoading: false });
     }
   },
@@ -62,9 +91,25 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const auth = getAuthClient();
-      const user = await auth.signInWithProvider("google");
+      let user = await auth.signInWithProvider("google");
+
+      // FIX: If user is wrapped in a 'user' property, unwrap it
+      if (user && typeof user === "object" && "user" in user && !("email" in user)) {
+        console.log("🔍 Google sign-in - Unwrapping nested user object");
+        user = (user as any).user;
+      }
+
+      console.log("🔍 Google sign-in - User data received:", {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        verified: user.verified,
+        provider: user.provider,
+        avatarUrl: user.avatarUrl,
+      });
       set({ user, token: auth.token || null, isLoading: false });
     } catch (error) {
+      console.error("Google sign in error:", error);
       const message = error instanceof Error ? error.message : "Failed to sign in with Google";
       set({ error: message, isLoading: false });
     }
@@ -74,7 +119,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const auth = getAuthClient();
-      const user = await auth.signInWithEmailAndPassword(email, password);
+      let user = await auth.signInWithEmailAndPassword(email, password);
+
+      // FIX: If user is wrapped in a 'user' property, unwrap it
+      if (user && typeof user === "object" && "user" in user && !("email" in user)) {
+        console.log("🔍 Email sign-in - Unwrapping nested user object");
+        user = (user as any).user;
+      }
+
       set({ user, token: auth.token || null, isLoading: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to sign in";
@@ -86,7 +138,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       const auth = getAuthClient();
-      const user = await auth.registerWithEmailAndPassword(email, password, { displayName });
+      let user = await auth.registerWithEmailAndPassword(email, password, { displayName });
+
+      // FIX: If user is wrapped in a 'user' property, unwrap it
+      if (user && typeof user === "object" && "user" in user && !("email" in user)) {
+        console.log("🔍 Email registration - Unwrapping nested user object");
+        user = (user as any).user;
+      }
+
       set({ user, token: auth.token || null, isLoading: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to register";

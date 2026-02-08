@@ -66,26 +66,26 @@ export interface RoomListing {
 export async function getAvailableRooms(roomName?: string): Promise<RoomListing[]> {
   try {
     const httpUrl = GAME_SERVER_URL.replace("ws://", "http://").replace("wss://", "https://");
-    const url = roomName ? `${httpUrl}/matchmake/${roomName}` : `${httpUrl}/matchmake`;
-    console.log('Fetching rooms from URL:', url);
+    const url = roomName ? `${httpUrl}/api/rooms/${roomName}` : `${httpUrl}/api/rooms`;
+    console.log("Fetching rooms from URL:", url);
     const response = await fetch(url, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'Accept': 'application/json',
+        Accept: "application/json",
       },
       // Ensure we don't use cached responses
-      cache: 'no-store',
+      cache: "no-store",
     });
-    console.log('Matchmaking response status:', response.status);
+    console.log("Matchmaking response status:", response.status);
     if (!response.ok) {
       console.warn(`Failed to fetch rooms: ${response.status} ${response.statusText}`);
       return [];
     }
     const rooms = await response.json();
-    console.log('Raw rooms data from server:', rooms);
+    console.log("Raw rooms data from server:", rooms);
     return Array.isArray(rooms) ? rooms : [];
   } catch (error) {
-    console.error('Error fetching rooms:', error);
+    console.error("Error fetching rooms:", error);
     return [];
   }
 }
@@ -93,9 +93,7 @@ export async function getAvailableRooms(roomName?: string): Promise<RoomListing[
 /**
  * Reconnect to a room using cached session data
  */
-export async function reconnect<T extends Schema>(
-  reconnectionToken: string
-): Promise<Room<T>> {
+export async function reconnect<T extends Schema>(reconnectionToken: string): Promise<Room<T>> {
   const colyseusClient = getClient();
   return await colyseusClient.reconnect<T>(reconnectionToken);
 }
@@ -118,7 +116,7 @@ interface SessionData {
  */
 export function getBrowserSessionId(): string {
   if (typeof window === "undefined") return "";
-  
+
   let sessionId = sessionStorage.getItem(BROWSER_SESSION_KEY);
   if (!sessionId) {
     // Generate a unique ID for this browser session (not persisted across browser restart)
@@ -144,13 +142,13 @@ export function getSession(): SessionData | null {
   if (typeof window === "undefined") return null;
   const data = localStorage.getItem(SESSION_KEY);
   if (!data) return null;
-  
+
   const sessionData = JSON.parse(data) as SessionData;
   // Validate browser session matches - if different browser session, don't reconnect
   if (sessionData.browserSessionId !== getBrowserSessionId()) {
     return null;
   }
-  
+
   return sessionData;
 }
 

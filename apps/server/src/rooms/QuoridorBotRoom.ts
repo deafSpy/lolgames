@@ -21,13 +21,28 @@ export class QuoridorBotRoom extends QuoridorRoom {
   private botId = "quoridor_bot";
   private difficulty: Difficulty = "hard";
 
-  onCreate(options: { playerName?: string; hostName?: string; createdAt?: number; vsBot?: boolean; difficulty?: Difficulty }): void {
+  onCreate(options: {
+    playerName?: string;
+    hostName?: string;
+    createdAt?: number;
+    vsBot?: boolean;
+    difficulty?: Difficulty;
+  }): void {
     super.onCreate(options);
     this.difficulty = options.difficulty || this.difficulty;
     logger.info({ roomId: this.roomId, difficulty: this.difficulty }, "Quoridor bot room created");
   }
 
-  onJoin(client: Client, options: { playerName?: string; hostName?: string; createdAt?: number; vsBot?: boolean; difficulty?: Difficulty }): void {
+  onJoin(
+    client: Client,
+    options: {
+      playerName?: string;
+      hostName?: string;
+      createdAt?: number;
+      vsBot?: boolean;
+      difficulty?: Difficulty;
+    }
+  ): void {
     // Call base join for human first
     super.onJoin(client, options);
 
@@ -54,25 +69,35 @@ export class QuoridorBotRoom extends QuoridorRoom {
       // Ensure human player is also in initialPlayers (should be added by super.onJoin)
       if (!this.initialPlayers.has(client.sessionId)) {
         this.initialPlayers.add(client.sessionId);
-        logger.warn({ roomId: this.roomId, playerId: client.sessionId }, "Human player was not in initialPlayers, adding manually");
+        logger.warn(
+          { roomId: this.roomId, playerId: client.sessionId },
+          "Human player was not in initialPlayers, adding manually"
+        );
       }
 
-      logger.info({
-        roomId: this.roomId,
-        humanPlayer: client.sessionId,
-        botPlayer: this.botId,
-        initialPlayers: Array.from(this.initialPlayers),
-        allPlayers: Array.from(this.state.players.keys())
-      }, "Bot added to Quoridor room");
+      logger.info(
+        {
+          roomId: this.roomId,
+          humanPlayer: client.sessionId,
+          botPlayer: this.botId,
+          initialPlayers: Array.from(this.initialPlayers),
+          allPlayers: Array.from(this.state.players.keys()),
+        },
+        "Bot added to Quoridor room"
+      );
     }
   }
 
   private getBotName(): string {
     switch (this.difficulty) {
-      case "easy": return "QuoriBot (Easy)";
-      case "medium": return "QuoriBot (Medium)";
-      case "hard": return "QuoriBot (Hard)";
-      default: return "QuoriBot";
+      case "easy":
+        return "QuoriBot (Easy)";
+      case "medium":
+        return "QuoriBot (Medium)";
+      case "hard":
+        return "QuoriBot (Hard)";
+      default:
+        return "QuoriBot";
     }
   }
 
@@ -113,7 +138,10 @@ export class QuoridorBotRoom extends QuoridorRoom {
       if (this.state.status !== "in_progress") return;
       if (this.state.currentTurnId !== this.botId) return;
 
-      logger.info({ roomId: this.roomId, botId: this.botId, currentTurnId: this.state.currentTurnId }, "Bot making move");
+      logger.info(
+        { roomId: this.roomId, botId: this.botId, currentTurnId: this.state.currentTurnId },
+        "Bot making move"
+      );
 
       const action = this.chooseBotAction(bot);
 
@@ -121,7 +149,10 @@ export class QuoridorBotRoom extends QuoridorRoom {
         // Apply move directly
         bot.x = action.x;
         bot.y = action.y;
-        logger.info({ roomId: this.roomId, botId: this.botId, x: action.x, y: action.y }, "Bot moved pawn");
+        logger.info(
+          { roomId: this.roomId, botId: this.botId, x: action.x, y: action.y },
+          "Bot moved pawn"
+        );
         this.broadcast("pawn_moved", { playerId: this.botId, x: action.x, y: action.y });
       } else if (action.type === "wall") {
         // Place wall
@@ -131,8 +162,22 @@ export class QuoridorBotRoom extends QuoridorRoom {
         wall.orientation = action.orientation;
         this.state.walls.push(wall);
         bot.wallsRemaining--;
-        logger.info({ roomId: this.roomId, botId: this.botId, x: action.x, y: action.y, orientation: action.orientation }, "Bot placed wall");
-        this.broadcast("wall_placed", { playerId: this.botId, x: action.x, y: action.y, orientation: action.orientation });
+        logger.info(
+          {
+            roomId: this.roomId,
+            botId: this.botId,
+            x: action.x,
+            y: action.y,
+            orientation: action.orientation,
+          },
+          "Bot placed wall"
+        );
+        this.broadcast("wall_placed", {
+          playerId: this.botId,
+          x: action.x,
+          y: action.y,
+          orientation: action.orientation,
+        });
       }
 
       const result = this.checkWinCondition();
@@ -141,12 +186,19 @@ export class QuoridorBotRoom extends QuoridorRoom {
         return;
       }
 
-      logger.info({ roomId: this.roomId, botId: this.botId, nextTurn: true }, "Bot turn completed, advancing to next turn");
+      logger.info(
+        { roomId: this.roomId, botId: this.botId, nextTurn: true },
+        "Bot turn completed, advancing to next turn"
+      );
       this.nextTurn();
     }, delay);
   }
 
-  private chooseBotAction(bot: QuoridorPlayer): { type: "move"; x: number; y: number } | { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } {
+  private chooseBotAction(
+    bot: QuoridorPlayer
+  ):
+    | { type: "move"; x: number; y: number }
+    | { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } {
     switch (this.difficulty) {
       case "easy":
         return this.easyAI(bot);
@@ -200,7 +252,11 @@ export class QuoridorBotRoom extends QuoridorRoom {
   /**
    * Hard AI: A* pathfinding + strategic wall placement
    */
-  private hardAI(bot: QuoridorPlayer): { type: "move"; x: number; y: number } | { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } {
+  private hardAI(
+    bot: QuoridorPlayer
+  ):
+    | { type: "move"; x: number; y: number }
+    | { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } {
     const opponent = this.getOpponent(bot.id) as QuoridorPlayer | null;
     if (!opponent) {
       return this.mediumAI(bot);
@@ -289,8 +345,12 @@ export class QuoridorBotRoom extends QuoridorRoom {
       ];
 
       for (const neighbor of neighbors) {
-        if (neighbor.x < 0 || neighbor.x >= this.state.boardSize ||
-            neighbor.y < 0 || neighbor.y >= this.state.boardSize) {
+        if (
+          neighbor.x < 0 ||
+          neighbor.x >= this.state.boardSize ||
+          neighbor.y < 0 ||
+          neighbor.y >= this.state.boardSize
+        ) {
           continue;
         }
 
@@ -338,7 +398,10 @@ export class QuoridorBotRoom extends QuoridorRoom {
     return false;
   }
 
-  private findBestWall(bot: QuoridorPlayer, opponent: QuoridorPlayer): { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } | null {
+  private findBestWall(
+    bot: QuoridorPlayer,
+    opponent: QuoridorPlayer
+  ): { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } | null {
     let bestWall: { x: number; y: number; orientation: "horizontal" | "vertical" } | null = null;
     let bestIncrease = 0;
 
@@ -349,7 +412,8 @@ export class QuoridorBotRoom extends QuoridorRoom {
       for (let dy = -2; dy <= 2; dy++) {
         const wx = opponent.x + dx;
         const wy = opponent.y + dy;
-        if (wx < 0 || wx >= this.state.boardSize - 1 || wy < 0 || wy >= this.state.boardSize - 1) continue;
+        if (wx < 0 || wx >= this.state.boardSize - 1 || wy < 0 || wy >= this.state.boardSize - 1)
+          continue;
 
         for (const orientation of ["horizontal", "vertical"] as const) {
           if (this.isWallPlacementValid(wx, wy, orientation)) {
@@ -369,7 +433,10 @@ export class QuoridorBotRoom extends QuoridorRoom {
 
             // Wall is good if it increases opponent's path more than ours
             if (oppNewPath < Infinity && myNewPath < Infinity) {
-              const increase = (oppNewPath - currentOppPath) - (myNewPath - this.getShortestPathLength(bot.x, bot.y, bot.goalRow));
+              const increase =
+                oppNewPath -
+                currentOppPath -
+                (myNewPath - this.getShortestPathLength(bot.x, bot.y, bot.goalRow));
               if (increase > bestIncrease) {
                 bestIncrease = increase;
                 bestWall = { x: wx, y: wy, orientation };
@@ -387,7 +454,11 @@ export class QuoridorBotRoom extends QuoridorRoom {
     return null;
   }
 
-  private isWallPlacementValid(x: number, y: number, orientation: "horizontal" | "vertical"): boolean {
+  private isWallPlacementValid(
+    x: number,
+    y: number,
+    orientation: "horizontal" | "vertical"
+  ): boolean {
     // Check bounds
     if (x < 0 || x >= this.state.boardSize - 1 || y < 0 || y >= this.state.boardSize - 1) {
       return false;
@@ -395,7 +466,16 @@ export class QuoridorBotRoom extends QuoridorRoom {
 
     // Check for collisions
     for (const wall of this.state.walls) {
-      if (this.wallsCollide(x, y, orientation, wall.x, wall.y, wall.orientation as "horizontal" | "vertical")) {
+      if (
+        this.wallsCollide(
+          x,
+          y,
+          orientation,
+          wall.x,
+          wall.y,
+          wall.orientation as "horizontal" | "vertical"
+        )
+      ) {
         return false;
       }
     }
@@ -420,9 +500,13 @@ export class QuoridorBotRoom extends QuoridorRoom {
     return valid;
   }
 
-  private wallsCollide(
-    x1: number, y1: number, o1: "horizontal" | "vertical",
-    x2: number, y2: number, o2: "horizontal" | "vertical"
+  protected wallsCollide(
+    x1: number,
+    y1: number,
+    o1: "horizontal" | "vertical",
+    x2: number,
+    y2: number,
+    o2: "horizontal" | "vertical"
   ): boolean {
     if (x1 === x2 && y1 === y2) return true;
     if (o1 === o2) {

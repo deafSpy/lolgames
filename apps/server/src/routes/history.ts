@@ -15,32 +15,44 @@ export async function registerHistoryRoutes(app: FastifyInstance) {
     "/history",
     async (request: FastifyRequest<{ Querystring: HistoryQuerystring }>, reply: FastifyReply) => {
       const authHeader = request.headers.authorization;
-      let identity: string | null = null;
+      let userId: string | null = null;
+      let browserSessionId: string | null = null;
 
+      // Check for authenticated user
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.substring("Bearer ".length);
         try {
-          const payload = JWT.verify(token) as { id?: string; email?: string };
-          identity = payload.id ? `user:${payload.id}` : payload.email ? `user:${payload.email}` : null;
-        } catch {
-          // Ignore invalid token, fall back to guest lookup.
+          // Decode JWT without verification first to see structure
+          const decoded = JWT.decode(token) as any;
+          console.log("🔍 History: JWT decoded (raw):", JSON.stringify(decoded, null, 2));
+
+          // Extract user ID from decoded token
+          userId = decoded?.id || decoded?.user?.id || null;
+
+          console.log("🔍 History: Extracted userId from token:", userId);
+        } catch (error) {
+          console.warn(
+            "🔍 History: JWT decode failed, continuing as guest:",
+            error instanceof Error ? error.message : error
+          );
+          userId = null;
         }
       }
 
-      if (!identity) {
-        const browserSessionId = request.query.browserSessionId;
-        if (browserSessionId) {
-          identity = `guest:${browserSessionId}`;
-        }
-      }
+      // Always check for browserSessionId (for both authenticated and guest users)
+      browserSessionId = request.query.browserSessionId || null;
+      console.log("🔍 History: Request params", { userId, browserSessionId });
 
-      if (!identity) {
+      // Need at least one identifier
+      if (!userId && !browserSessionId) {
         return reply.status(400).send({ error: "identity_required" });
       }
 
-      const games = historyService.getRecentGames(identity, 10);
+      // Pass both userId and browserSessionId to getRecentGames
+      const games = await historyService.getRecentGames(userId, browserSessionId, 10);
       return {
-        identity,
+        userId,
+        browserSessionId,
         games,
       };
     }

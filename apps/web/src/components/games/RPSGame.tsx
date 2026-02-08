@@ -21,6 +21,7 @@ interface RPSGameProps {
   disabled?: boolean;
   turnStartedAt?: number;
   turnTimeLimit?: number;
+  players?: Map<string, any>;
 }
 
 const choices: { value: RPSChoice; emoji: string; label: string }[] = [
@@ -46,9 +47,10 @@ export function RPSGame({
   disabled = false,
   turnStartedAt = 0,
   turnTimeLimit = 10000,
+  players,
 }: RPSGameProps) {
   const [timeRemaining, setTimeRemaining] = useState<number>(turnTimeLimit);
-  
+
   const isPlayer1 = playerId === player1Id;
   const myScore = isPlayer1 ? player1Score : player2Score;
   const opponentScore = isPlayer1 ? player2Score : player1Score;
@@ -56,6 +58,19 @@ export function RPSGame({
   const opponentCommitted = isPlayer1 ? player2Committed : player1Committed;
   const myChoice = isPlayer1 ? player1Choice : player2Choice;
   const opponentChoice = isPlayer1 ? player2Choice : player1Choice;
+
+  // Get opponent name from players map
+  const opponentId = isPlayer1
+    ? players?.get(player1Id)?.id === playerId
+      ? Array.from(players.keys()).find((id) => id !== playerId)
+      : undefined
+    : player1Id;
+  const opponentPlayer = players?.get(
+    opponentId ||
+      (isPlayer1 ? Array.from(players?.keys() || []).find((id) => id !== playerId) : player1Id) ||
+      ""
+  );
+  const opponentName = opponentPlayer?.displayName || "Opponent";
 
   // Timer effect
   useEffect(() => {
@@ -106,14 +121,10 @@ export function RPSGame({
     <div className="flex flex-col items-center max-w-2xl mx-auto">
       {/* Score */}
       <div className="mb-10 text-center">
-        <div className="text-surface-400 text-lg mb-3">
-          Round {roundNumber}
-        </div>
+        <div className="text-surface-400 text-lg mb-3">Round {roundNumber}</div>
         <div className="flex items-center gap-8">
           <div className="text-center">
-            <div className="flex gap-2 justify-center mb-2">
-              {renderWinCircles(myScore, true)}
-            </div>
+            <div className="flex gap-2 justify-center mb-2">{renderWinCircles(myScore, true)}</div>
             <div className="text-sm text-surface-400">You</div>
           </div>
           <div className="text-surface-500 text-2xl">vs</div>
@@ -121,7 +132,7 @@ export function RPSGame({
             <div className="flex gap-2 justify-center mb-2">
               {renderWinCircles(opponentScore, false)}
             </div>
-            <div className="text-sm text-surface-400">Opponent</div>
+            <div className="text-sm text-surface-400">{opponentName}</div>
           </div>
         </div>
       </div>
@@ -147,18 +158,22 @@ export function RPSGame({
           <span className="text-surface-400">Waiting for opponent...</span>
         ) : phase === "commit" ? (
           myCommitted ? (
-            <span className="text-primary-400">
-              Waiting for opponent to choose...
-            </span>
+            <span className="text-primary-400">Waiting for opponent to choose...</span>
           ) : (
             <span className="text-success font-medium">Make your choice!</span>
           )
         ) : phase === "reveal" ? (
           <span className="text-accent-400 font-medium text-xl">Revealing...</span>
         ) : (
-          <span className={`font-medium text-xl ${
-            getRoundResult() === "win" ? "text-success" : getRoundResult() === "lose" ? "text-error" : "text-surface-300"
-          }`}>
+          <span
+            className={`font-medium text-xl ${
+              getRoundResult() === "win"
+                ? "text-success"
+                : getRoundResult() === "lose"
+                  ? "text-error"
+                  : "text-surface-300"
+            }`}
+          >
             {getRoundResult() === "win"
               ? "🎉 You won this round!"
               : getRoundResult() === "lose"
@@ -212,7 +227,7 @@ export function RPSGame({
               <span className="text-5xl text-surface-600">?</span>
             )}
           </div>
-          <div className="text-sm text-surface-400">Opponent</div>
+          <div className="text-sm text-surface-400">{opponentName}</div>
         </div>
       </div>
 
@@ -243,4 +258,3 @@ export function RPSGame({
     </div>
   );
 }
-

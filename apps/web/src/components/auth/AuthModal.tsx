@@ -55,24 +55,29 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="relative w-full max-w-md rounded-lg bg-white p-8 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="relative w-full max-w-md rounded-lg bg-surface-800 p-8 shadow-2xl border border-surface-700">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 text-gray-400 hover:text-gray-600"
+          className="absolute right-4 top-4 text-surface-400 hover:text-surface-200 transition-colors"
           aria-label="Close"
         >
           <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M6 18L18 6M6 6l12 12"
+            />
           </svg>
         </button>
 
-        <h2 className="mb-6 text-2xl font-bold text-gray-900">
+        <h2 className="mb-6 text-2xl font-bold text-surface-50">
           {mode === "login" ? "Sign In" : "Create Account"}
         </h2>
 
         {error && (
-          <div className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">
+          <div className="mb-4 rounded-lg bg-error/20 border border-error/50 p-3 text-sm text-error">
             {error}
           </div>
         )}
@@ -80,7 +85,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === "register" && (
             <div>
-              <label htmlFor="displayName" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="displayName" className="block text-sm font-medium text-surface-200">
                 Display Name (optional)
               </label>
               <input
@@ -88,14 +93,14 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 id="displayName"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="mt-1 block w-full rounded-lg border border-surface-600 bg-surface-700 px-3 py-2 text-surface-50 placeholder-surface-400 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 placeholder="Your name"
               />
             </div>
           )}
 
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="email" className="block text-sm font-medium text-surface-200">
               Email
             </label>
             <input
@@ -104,13 +109,13 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="mt-1 block w-full rounded-lg border border-surface-600 bg-surface-700 px-3 py-2 text-surface-50 placeholder-surface-400 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               placeholder="you@example.com"
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="password" className="block text-sm font-medium text-surface-200">
               Password
             </label>
             <input
@@ -120,24 +125,20 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="mt-1 block w-full rounded-lg border border-surface-600 bg-surface-700 px-3 py-2 text-surface-50 placeholder-surface-400 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               placeholder="••••••••"
             />
           </div>
 
-          <Button
-            type="submit"
-            disabled={isLoading}
-            className="w-full"
-          >
+          <Button type="submit" disabled={isLoading} className="w-full">
             {isLoading ? "Loading..." : mode === "login" ? "Sign In" : "Create Account"}
           </Button>
         </form>
 
         <div className="my-6 flex items-center">
-          <div className="flex-1 border-t border-gray-300"></div>
-          <span className="px-4 text-sm text-gray-500">or</span>
-          <div className="flex-1 border-t border-gray-300"></div>
+          <div className="flex-1 border-t border-surface-600"></div>
+          <span className="px-4 text-sm text-surface-400">or</span>
+          <div className="flex-1 border-t border-surface-600"></div>
         </div>
 
         <Button
@@ -169,23 +170,23 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
         <div className="mt-4 text-center text-sm">
           {mode === "login" ? (
-            <p className="text-gray-600">
+            <p className="text-surface-300">
               Don't have an account?{" "}
               <button
                 type="button"
                 onClick={() => setMode("register")}
-                className="font-medium text-blue-600 hover:text-blue-500"
+                className="font-medium text-primary-400 hover:text-primary-300 transition-colors"
               >
                 Sign up
               </button>
             </p>
           ) : (
-            <p className="text-gray-600">
+            <p className="text-surface-300">
               Already have an account?{" "}
               <button
                 type="button"
                 onClick={() => setMode("login")}
-                className="font-medium text-blue-600 hover:text-blue-500"
+                className="font-medium text-primary-400 hover:text-primary-300 transition-colors"
               >
                 Sign in
               </button>

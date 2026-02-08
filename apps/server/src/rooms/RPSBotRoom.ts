@@ -51,10 +51,7 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
     // Initialize bot - no difficulty options for RPS
     this.bot = new RPSBot(this.botPlayerId);
 
-    logger.info(
-      { roomId: this.roomId },
-      "Bot created for RPS"
-    );
+    logger.info({ roomId: this.roomId }, "Bot created for RPS");
   }
 
   protected checkStartGame(): void {
@@ -132,10 +129,7 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
     this.state.player1Choice = choice;
     this.state.player1Committed = true;
 
-    logger.info(
-      { roomId: this.roomId, choice },
-      "Human committed choice"
-    );
+    logger.info({ roomId: this.roomId, choice }, "Human committed choice");
 
     this.broadcast("player_committed", { playerId: client.sessionId });
 
@@ -145,7 +139,7 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
     }
   }
 
-  protected handleMoveMessage(client: Client, data: unknown): void {
+  protected override async handleMoveMessage(client: Client, data: unknown): Promise<void> {
     if (this.state.status !== "in_progress") {
       client.send("error", { message: "Game is not in progress" });
       return;
@@ -191,6 +185,7 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
       this.state.player2Score++;
     }
 
+    const isDraw = !winner;
     logger.info(
       {
         roomId: this.roomId,
@@ -198,8 +193,14 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
         player1Choice: this.state.player1Choice,
         player2Choice: this.state.player2Choice,
         winner,
+        isDraw,
+        player1Score: this.state.player1Score,
+        player2Score: this.state.player2Score,
+        willAdvanceRound: !!winner,
       },
-      "Round completed"
+      isDraw
+        ? "Round DRAW - will replay same round"
+        : "Round completed - will advance to next round"
     );
 
     this.broadcast("round_result", {
@@ -215,7 +216,13 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
       this.endGame(winCondition.winner, winCondition.isDraw);
     } else {
       this.clock.setTimeout(() => {
-        this.startNextRound();
+        if (winner) {
+          // Only advance round on actual wins
+          this.startNextRound();
+        } else {
+          // Replay same round on draws
+          this.replayCurrentRound();
+        }
       }, NEXT_ROUND_DELAY);
     }
   }
@@ -251,6 +258,21 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
     this.scheduleBotChoice();
   }
 
+  private replayCurrentRound(): void {
+    this.state.phase = "commit";
+    this.state.player1Choice = "";
+    this.state.player2Choice = "";
+    this.state.player1Committed = false;
+    this.state.player2Committed = false;
+    this.state.roundWinnerId = "";
+    this.state.turnStartedAt = Date.now();
+
+    this.broadcast("round_replay", { roundNumber: this.state.roundNumber });
+
+    // Bot makes choice for replayed round
+    this.scheduleBotChoice();
+  }
+
   checkWinCondition(): { winner: string | null; isDraw: boolean } | null {
     const winsNeeded = this.state.targetScore;
 
@@ -281,4 +303,3 @@ export class RPSBotRoom extends BaseRoom<RPSState> {
     await super.onDispose();
   }
 }
-

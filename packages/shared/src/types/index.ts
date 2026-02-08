@@ -50,6 +50,7 @@ export interface LobbyRoom {
   maxPlayers: number;
   status: GameStatus;
   createdAt: number;
+  vsBot?: boolean;
 }
 
 // Game Result Types
@@ -345,4 +346,3 @@ export interface BlackjackTournamentConfig {
   handsPerRound: number;
   allowSecretBets: boolean;
 }
-

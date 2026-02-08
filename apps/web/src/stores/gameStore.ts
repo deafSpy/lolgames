@@ -34,7 +34,10 @@ interface GameStore {
   setPlayerName: (name: string) => void;
   fetchRooms: (gameType?: string) => Promise<void>;
   createRoom: (gameType: GameType, options?: Record<string, unknown>) => Promise<string | null>;
-  createBotRoom: (gameType: GameType, difficulty?: "easy" | "medium" | "hard") => Promise<string | null>;
+  createBotRoom: (
+    gameType: GameType,
+    difficulty?: "easy" | "medium" | "hard"
+  ) => Promise<string | null>;
   joinRoom: (roomId: string) => Promise<boolean>;
   leaveRoom: () => Promise<void>;
   sendMessage: (type: string, data?: Record<string, unknown>) => void;
@@ -65,27 +68,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
         let gameType = room.metadata?.gameType as GameType;
         if (!gameType && room.name) {
           // Extract game type from room name (remove "_bot" suffix if present)
-          const normalizedName = room.name.replace('_bot', '');
+          const normalizedName = room.name.replace("_bot", "");
           switch (normalizedName) {
-            case 'connect4': gameType = GameType.CONNECT4; break;
-            case 'rps': gameType = GameType.ROCK_PAPER_SCISSORS; break;
-            case 'quoridor': gameType = GameType.QUORIDOR; break;
-            case 'sequence': gameType = GameType.SEQUENCE; break;
-            case 'catan': gameType = GameType.CATAN; break;
-            case 'splendor': gameType = GameType.SPLENDOR; break;
-            case 'monopoly_deal': gameType = GameType.MONOPOLY_DEAL; break;
-            case 'blackjack': gameType = GameType.BLACKJACK; break;
-            default: gameType = GameType.CONNECT4;
+            case "connect4":
+              gameType = GameType.CONNECT4;
+              break;
+            case "rps":
+              gameType = GameType.ROCK_PAPER_SCISSORS;
+              break;
+            case "quoridor":
+              gameType = GameType.QUORIDOR;
+              break;
+            case "sequence":
+              gameType = GameType.SEQUENCE;
+              break;
+            case "catan":
+              gameType = GameType.CATAN;
+              break;
+            case "splendor":
+              gameType = GameType.SPLENDOR;
+              break;
+            case "monopoly_deal":
+              gameType = GameType.MONOPOLY_DEAL;
+              break;
+            case "blackjack":
+              gameType = GameType.BLACKJACK;
+              break;
+            default:
+              gameType = GameType.CONNECT4;
           }
         }
+
+        // Get status from metadata, fallback to checking player count
+        const status =
+          (room.metadata?.status as GameStatus) ||
+          (room.clients >= room.maxClients ? GameStatus.IN_PROGRESS : GameStatus.WAITING);
+
         return {
           roomId: room.roomId,
           gameType: gameType || GameType.CONNECT4,
           hostName: (room.metadata?.hostName as string) || "Unknown",
           playerCount: room.clients,
           maxPlayers: room.maxClients,
-          status: GameStatus.WAITING,
+          status,
           createdAt: (room.metadata?.createdAt as number) || Date.now(),
+          vsBot: room.name?.includes("_bot") || false,
         };
       });
       console.log("Mapped lobby rooms:", lobbyRooms);
@@ -147,13 +174,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     try {
       // Games with bot support
-      const supportsBot = gameType === GameType.CONNECT4 || 
-                          gameType === GameType.ROCK_PAPER_SCISSORS || 
-                          gameType === GameType.QUORIDOR ||
-                          gameType === GameType.SEQUENCE ||
-                          gameType === GameType.SPLENDOR ||
-                          gameType === GameType.MONOPOLY_DEAL ||
-                          gameType === GameType.BLACKJACK;
+      const supportsBot =
+        gameType === GameType.CONNECT4 ||
+        gameType === GameType.ROCK_PAPER_SCISSORS ||
+        gameType === GameType.QUORIDOR ||
+        gameType === GameType.SEQUENCE ||
+        gameType === GameType.SPLENDOR ||
+        gameType === GameType.MONOPOLY_DEAL ||
+        gameType === GameType.BLACKJACK;
       const roomName = supportsBot ? `${gameType}_bot` : gameType;
       // Force a fresh bot room each time
       const room = await createRoomDirect(roomName, {
@@ -215,7 +243,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to join room";
+      let message = "Failed to join room";
+      if (error instanceof Error) {
+        // Check for common error messages from Colyseus
+        if (error.message.includes("not found") || error.message.includes("INVALID_ROOM_ID")) {
+          message = `Room ${roomId} not found. It may have ended or the code is incorrect.`;
+        } else if (error.message.includes("full") || error.message.includes("ROOM_IS_FULL")) {
+          message = "This room is full. Please try another room.";
+        } else {
+          message = error.message;
+        }
+      }
       set({ connectionError: message, isConnecting: false });
       return false;
     }
@@ -239,10 +277,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 }));
 
 // Helper to set up room event listeners
-function setupRoomListeners(
-  room: Room<Schema>,
-  set: (state: Partial<GameStore>) => void
-) {
+function setupRoomListeners(room: Room<Schema>, set: (state: Partial<GameStore>) => void) {
   room.onLeave((code) => {
     console.warn("Left room with code:", code);
     clearSession();

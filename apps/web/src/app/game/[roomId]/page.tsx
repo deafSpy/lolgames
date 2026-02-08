@@ -13,9 +13,24 @@ import { CatanBoard } from "@/components/games/CatanBoard";
 import { SplendorBoard } from "@/components/games/SplendorBoard";
 import { MonopolyDealBoard } from "@/components/games/MonopolyDealBoard";
 import { BlackjackBoard } from "@/components/games/BlackjackBoard";
-import { PlayerInfoSkeleton, Connect4Skeleton, SplendorSkeleton, QuoridorSkeleton, RPSSkeleton, GenericGameSkeleton } from "@/components/games/SkeletonLoaders";
+import {
+  PlayerInfoSkeleton,
+  Connect4Skeleton,
+  SplendorSkeleton,
+  QuoridorSkeleton,
+  RPSSkeleton,
+  GenericGameSkeleton,
+} from "@/components/games/SkeletonLoaders";
 import { useGameStore } from "@/stores/gameStore";
-import { getSession, joinById, reconnect, clearSession, saveSession, getBrowserSessionId } from "@/lib/colyseus";
+import { useAuthStore } from "@/stores/authStore";
+import {
+  getSession,
+  joinById,
+  reconnect,
+  clearSession,
+  saveSession,
+  getBrowserSessionId,
+} from "@/lib/colyseus";
 import { GameType, RPSChoice } from "@multiplayer/shared";
 import type { Room } from "colyseus.js";
 import type { Schema } from "@colyseus/schema";
@@ -80,18 +95,70 @@ interface GameState {
   bankRed?: number;
   bankBlack?: number;
   bankGold?: number;
-  tier1Cards?: Array<{ id: string; tier: number; gemType: string; points: number; costWhite: number; costBlue: number; costGreen: number; costRed: number; costBlack: number }>;
-  tier2Cards?: Array<{ id: string; tier: number; gemType: string; points: number; costWhite: number; costBlue: number; costGreen: number; costRed: number; costBlack: number }>;
-  tier3Cards?: Array<{ id: string; tier: number; gemType: string; points: number; costWhite: number; costBlue: number; costGreen: number; costRed: number; costBlack: number }>;
-  nobles?: Array<{ id: string; points: number; reqWhite: number; reqBlue: number; reqGreen: number; reqRed: number; reqBlack: number }>;
+  tier1Cards?: Array<{
+    id: string;
+    tier: number;
+    gemType: string;
+    points: number;
+    costWhite: number;
+    costBlue: number;
+    costGreen: number;
+    costRed: number;
+    costBlack: number;
+  }>;
+  tier2Cards?: Array<{
+    id: string;
+    tier: number;
+    gemType: string;
+    points: number;
+    costWhite: number;
+    costBlue: number;
+    costGreen: number;
+    costRed: number;
+    costBlack: number;
+  }>;
+  tier3Cards?: Array<{
+    id: string;
+    tier: number;
+    gemType: string;
+    points: number;
+    costWhite: number;
+    costBlue: number;
+    costGreen: number;
+    costRed: number;
+    costBlack: number;
+  }>;
+  nobles?: Array<{
+    id: string;
+    points: number;
+    reqWhite: number;
+    reqBlue: number;
+    reqGreen: number;
+    reqRed: number;
+    reqBlack: number;
+  }>;
   tier1Remaining?: number;
   tier2Remaining?: number;
   tier3Remaining?: number;
   pointsToWin?: number;
   // Monopoly Deal specific
   deckRemaining?: number;
-  discardPile?: Array<{ id: string; cardType: string; value: number; name: string; actionType?: string; color?: string; colors?: string[] }>;
-  actionStack?: Array<{ id: string; actionType: string; sourcePlayerId: string; targetPlayerId: string; amount?: number }>;
+  discardPile?: Array<{
+    id: string;
+    cardType: string;
+    value: number;
+    name: string;
+    actionType?: string;
+    color?: string;
+    colors?: string[];
+  }>;
+  actionStack?: Array<{
+    id: string;
+    actionType: string;
+    sourcePlayerId: string;
+    targetPlayerId: string;
+    amount?: number;
+  }>;
   activeResponderId?: string;
   setsToWin?: number;
   // Blackjack specific
@@ -151,11 +218,186 @@ export default function GameRoomPage() {
   const [disconnectedCode, setDisconnectedCode] = useState<number | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [isReplaying, setIsReplaying] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ senderId: string; senderName: string; content: string; timestamp: number }>>([]);
+  const [chatMessages, setChatMessages] = useState<
+    Array<{ senderId: string; senderName: string; content: string; timestamp: number }>
+  >([]);
   const [chatInput, setChatInput] = useState("");
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [isBoardReady, setIsBoardReady] = useState(false); // Track if board has received initial state
+
+  // Helper function to register message handlers
+  const registerMessageHandlers = useCallback((room: Room<Schema>) => {
+    // Chat message listener
+    room.onMessage(
+      "chat",
+      (data: { senderId: string; senderName: string; content: string; timestamp: number }) => {
+        setChatMessages((prev) => [...prev.slice(-49), data]); // Keep last 50 messages
+      }
+    );
+
+    // RPS game event listeners
+    room.onMessage("player_committed", (data: { playerId: string }) => {
+      console.log("Player committed:", data.playerId);
+    });
+
+    room.onMessage("choices_revealed", (data: { player1Choice: string; player2Choice: string }) => {
+      console.log("Choices revealed:", data);
+    });
+
+    room.onMessage(
+      "round_result",
+      (data: {
+        roundNumber: number;
+        winner: string;
+        player1Score: number;
+        player2Score: number;
+      }) => {
+        console.log("Round result:", data);
+      }
+    );
+
+    room.onMessage("round_started", (data: { roundNumber: number }) => {
+      console.log("Round started:", data.roundNumber);
+    });
+
+    room.onMessage("round_replay", (data: { roundNumber: number }) => {
+      console.log("Round replayed:", data.roundNumber);
+    });
+
+    room.onMessage("timeout", (data: { message: string }) => {
+      console.log("Round timeout:", data.message);
+    });
+
+    room.onMessage("auto_choice", (data: { playerId: string }) => {
+      console.log("Auto choice assigned for player:", data.playerId);
+    });
+
+    room.onMessage("error", (data) => {
+      setError(data.message);
+      setTimeout(() => setError(null), 3000);
+    });
+  }, []);
+
+  // Helper function to extract game state based on game type
+  const extractGameState = useCallback((s: any, roomName: string): GameState => {
+    const plainState: GameState = {
+      status: s.status,
+      currentTurnId: s.currentTurnId,
+      winnerId: s.winnerId,
+      isDraw: s.isDraw,
+      phase: s.phase,
+      turnStartedAt: s.turnStartedAt,
+      turnTimeLimit: s.turnTimeLimit,
+    };
+
+    // Always extract players map (needed for all games)
+    if (s.players) {
+      plainState.players = new Map(s.players);
+    }
+
+    // Game-specific state extraction
+    const normalized = normalizeGameType(roomName);
+
+    if (normalized === GameType.CONNECT4) {
+      plainState.board = s.board ? Array.from(s.board as unknown as ArrayLike<number>) : [];
+      plainState.player1Id = s.player1Id;
+      plainState.player2Id = s.player2Id;
+      plainState.moveCount = s.moveCount;
+    } else if (normalized === GameType.ROCK_PAPER_SCISSORS) {
+      plainState.roundNumber = s.roundNumber;
+      plainState.targetScore = s.targetScore;
+      plainState.player1Score = s.player1Score;
+      plainState.player2Score = s.player2Score;
+      plainState.player1Choice = s.player1Choice;
+      plainState.player2Choice = s.player2Choice;
+      plainState.player1Committed = s.player1Committed;
+      plainState.player2Committed = s.player2Committed;
+      plainState.roundWinnerId = s.roundWinnerId;
+      plainState.player1Id = s.player1Id;
+      plainState.player2Id = s.player2Id;
+    } else if (normalized === GameType.QUORIDOR) {
+      plainState.boardSize = s.boardSize;
+      if (s.walls) {
+        plainState.walls = Array.from(
+          s.walls as unknown as ArrayLike<{ x: number; y: number; orientation: string }>
+        );
+      }
+    } else if (roomName === "catan") {
+      if (s.tiles) {
+        plainState.tiles = Array.from(
+          s.tiles as unknown as ArrayLike<{
+            q: number;
+            r: number;
+            tileType: string;
+            number: number;
+            hasRobber: boolean;
+          }>
+        );
+      }
+      if (s.vertices) {
+        plainState.vertices = new Map(s.vertices);
+      }
+      if (s.edges) {
+        plainState.edges = new Map(s.edges);
+      }
+      plainState.lastDiceRoll = s.lastDiceRoll;
+      plainState.setupRound = s.setupRound;
+    } else if (roomName === "splendor") {
+      plainState.bankWhite = s.bankWhite;
+      plainState.bankBlue = s.bankBlue;
+      plainState.bankGreen = s.bankGreen;
+      plainState.bankRed = s.bankRed;
+      plainState.bankBlack = s.bankBlack;
+      plainState.bankGold = s.bankGold;
+      if (s.tier1Cards) {
+        plainState.tier1Cards = Array.from(s.tier1Cards!);
+      }
+      if (s.tier2Cards) {
+        plainState.tier2Cards = Array.from(s.tier2Cards!);
+      }
+      if (s.tier3Cards) {
+        plainState.tier3Cards = Array.from(s.tier3Cards!);
+      }
+      if (s.nobles) {
+        plainState.nobles = Array.from(s.nobles!);
+      }
+      plainState.tier1Remaining = s.tier1Remaining;
+      plainState.tier2Remaining = s.tier2Remaining;
+      plainState.tier3Remaining = s.tier3Remaining;
+      plainState.pointsToWin = s.pointsToWin;
+    } else if (roomName === "monopoly_deal") {
+      plainState.deckRemaining = s.deckRemaining;
+      plainState.activeResponderId = s.activeResponderId;
+      plainState.setsToWin = s.setsToWin;
+      if (s.discardPile) {
+        plainState.discardPile = Array.from(s.discardPile!);
+      }
+      if (s.actionStack) {
+        plainState.actionStack = Array.from(s.actionStack!);
+      }
+    } else if (roomName === "blackjack") {
+      if (s.dealerHand) {
+        plainState.dealerHand = Array.from(s.dealerHand!);
+      }
+      plainState.dealerValue = s.dealerValue;
+      plainState.dealerBusted = s.dealerBusted;
+      plainState.dealerBlackjack = s.dealerBlackjack;
+      plainState.handNumber = s.handNumber;
+      plainState.buttonPlayerId = s.buttonPlayerId;
+      if (s.eliminationHands) {
+        plainState.eliminationHands = Array.from(
+          s.eliminationHands as unknown as ArrayLike<number>
+        );
+      }
+      plainState.minBet = s.minBet;
+      plainState.maxBet = s.maxBet;
+      plainState.allowSecretBets = s.allowSecretBets;
+      plainState.playersRemaining = s.playersRemaining;
+    }
+
+    return plainState;
+  }, []);
 
   // Connect to room
   useEffect(() => {
@@ -177,11 +419,23 @@ export default function GameRoomPage() {
           setPlayerId(currentRoomRef.sessionId);
           setGameType(normalizeGameType(currentRoomRef.name));
 
+          // Register message handlers
+          registerMessageHandlers(currentRoomRef);
+
+          // Set initial state if it exists
+          if (currentRoomRef.state) {
+            const s = currentRoomRef.state as unknown as GameState;
+            const initialState = extractGameState(s, currentRoomRef.name);
+            setGameState(initialState);
+            setIsBoardReady(true);
+          }
+
           // Subscribe to state changes locally
           currentRoomRef.onStateChange((state) => {
-            setGameState({
-              ...(state as unknown as GameState),
-            });
+            const s = state as unknown as GameState;
+            const newState = extractGameState(s, currentRoomRef.name);
+            setGameState(newState);
+            setIsBoardReady(true);
           });
 
           setIsConnecting(false);
@@ -194,7 +448,16 @@ export default function GameRoomPage() {
         // For now, skip reconnection logic and just join as new player
         // TODO: Fix reconnection token validation issue
         clearSession(); // ensure stale tokens don't lock the seat
-        currentRoom = await joinById(roomId, { playerName });
+
+        // Get auth user ID if signed in
+        const authUserId = useAuthStore.getState().user?.id;
+        const browserSessionId = getBrowserSessionId();
+
+        currentRoom = await joinById(roomId, {
+          playerName,
+          userId: authUserId,
+          browserSessionId,
+        });
 
         setRoom(currentRoom);
         setPlayerId(currentRoom.sessionId);
@@ -208,131 +471,19 @@ export default function GameRoomPage() {
           browserSessionId: getBrowserSessionId(),
         });
 
+        // Register message handlers
+        registerMessageHandlers(currentRoom);
+
         // Set up state listener
         currentRoom.onStateChange((state) => {
-          const s = state as unknown as GameState & { turnStartedAt?: number; turnTimeLimit?: number };
-          const plainState: GameState = {
-            status: s.status,
-            currentTurnId: s.currentTurnId,
-            winnerId: s.winnerId,
-            isDraw: s.isDraw,
-            phase: s.phase,
-            turnStartedAt: s.turnStartedAt,
-            turnTimeLimit: s.turnTimeLimit,
-          };
-
-          // Game-specific state extraction
-          const roomName = currentRoom?.name || "";
-          const normalized = normalizeGameType(roomName);
-
-          if (normalized === GameType.CONNECT4) {
-            plainState.board = s.board ? Array.from(s.board as unknown as ArrayLike<number>) : [];
-            plainState.player1Id = s.player1Id;
-            plainState.player2Id = s.player2Id;
-            plainState.moveCount = s.moveCount;
-          } else if (normalized === GameType.ROCK_PAPER_SCISSORS) {
-            plainState.roundNumber = s.roundNumber;
-            plainState.targetScore = s.targetScore;
-            plainState.player1Score = s.player1Score;
-            plainState.player2Score = s.player2Score;
-            plainState.player1Choice = s.player1Choice;
-            plainState.player2Choice = s.player2Choice;
-            plainState.player1Committed = s.player1Committed;
-            plainState.player2Committed = s.player2Committed;
-            plainState.roundWinnerId = s.roundWinnerId;
-            plainState.player1Id = s.player1Id;
-            plainState.player2Id = s.player2Id;
-          } else if (normalized === GameType.QUORIDOR) {
-            plainState.boardSize = s.boardSize;
-            if (s.walls) {
-              plainState.walls = Array.from(s.walls as unknown as ArrayLike<{ x: number; y: number; orientation: string }>);
-            }
-            if (s.players) {
-              plainState.players = new Map(s.players);
-            }
-          } else if (roomName === "catan") {
-            if (s.tiles) {
-              plainState.tiles = Array.from(s.tiles as unknown as ArrayLike<{ q: number; r: number; tileType: string; number: number; hasRobber: boolean }>);
-            }
-            if (s.vertices) {
-              plainState.vertices = new Map(s.vertices);
-            }
-            if (s.edges) {
-              plainState.edges = new Map(s.edges);
-            }
-            if (s.players) {
-              plainState.players = new Map(s.players);
-            }
-            plainState.lastDiceRoll = s.lastDiceRoll;
-            plainState.setupRound = s.setupRound;
-          } else if (roomName === "splendor") {
-            plainState.bankWhite = s.bankWhite;
-            plainState.bankBlue = s.bankBlue;
-            plainState.bankGreen = s.bankGreen;
-            plainState.bankRed = s.bankRed;
-            plainState.bankBlack = s.bankBlack;
-            plainState.bankGold = s.bankGold;
-            if (s.tier1Cards) {
-              plainState.tier1Cards = Array.from(s.tier1Cards!);
-            }
-            if (s.tier2Cards) {
-              plainState.tier2Cards = Array.from(s.tier2Cards!);
-            }
-            if (s.tier3Cards) {
-              plainState.tier3Cards = Array.from(s.tier3Cards!);
-            }
-            if (s.nobles) {
-              plainState.nobles = Array.from(s.nobles!);
-            }
-            plainState.tier1Remaining = s.tier1Remaining;
-            plainState.tier2Remaining = s.tier2Remaining;
-            plainState.tier3Remaining = s.tier3Remaining;
-            plainState.pointsToWin = s.pointsToWin;
-            if (s.players) {
-              plainState.players = new Map(s.players);
-            }
-          } else if (roomName === "monopoly_deal") {
-            plainState.deckRemaining = s.deckRemaining;
-            plainState.activeResponderId = s.activeResponderId;
-            plainState.setsToWin = s.setsToWin;
-            if (s.discardPile) {
-              plainState.discardPile = Array.from(s.discardPile!);
-            }
-            if (s.actionStack) {
-              plainState.actionStack = Array.from(s.actionStack!);
-            }
-            if (s.players) {
-              plainState.players = new Map(s.players);
-            }
-          } else if (roomName === "blackjack") {
-            if (s.dealerHand) {
-              plainState.dealerHand = Array.from(s.dealerHand!);
-            }
-            plainState.dealerValue = s.dealerValue;
-            plainState.dealerBusted = s.dealerBusted;
-            plainState.dealerBlackjack = s.dealerBlackjack;
-            plainState.handNumber = s.handNumber;
-            plainState.buttonPlayerId = s.buttonPlayerId;
-            if (s.eliminationHands) {
-              plainState.eliminationHands = Array.from(s.eliminationHands as unknown as ArrayLike<number>);
-            }
-            plainState.minBet = s.minBet;
-            plainState.maxBet = s.maxBet;
-            plainState.allowSecretBets = s.allowSecretBets;
-            plainState.playersRemaining = s.playersRemaining;
-            if (s.players) {
-              plainState.players = new Map(s.players);
-            }
-          }
-
+          const s = state as unknown as GameState;
+          const plainState = extractGameState(s, currentRoom?.name || "");
           setGameState(plainState);
-          // Mark board as ready once we've received game state
           setIsBoardReady(true);
         });
 
         // Handle room events
         currentRoom.onLeave((code) => {
-          // Don't auto-navigate away; surface the disconnect and keep the results visible
           setDisconnectedCode(code);
           if (code !== 1000) {
             setError(`Disconnected (code: ${code})`);
@@ -341,22 +492,6 @@ export default function GameRoomPage() {
 
         currentRoom.onError((code, message) => {
           setError(message || `Error: ${code}`);
-        });
-
-        currentRoom.onMessage("error", (data) => {
-          setError(data.message);
-          setTimeout(() => setError(null), 3000);
-        });
-
-        // Chat message listener
-        currentRoom.onMessage("chat", (data: { senderId: string; senderName: string; content: string; timestamp: number }) => {
-          setChatMessages((prev) => [...prev.slice(-49), data]); // Keep last 50 messages
-        });
-
-        // RPS round replay listener (for draw rounds)
-        currentRoom.onMessage("round_replay", (data: { roundNumber: number }) => {
-          // State updates should handle this, but log for debugging
-          console.log("Round replayed:", data.roundNumber);
         });
 
         setIsConnecting(false);
@@ -397,18 +532,65 @@ export default function GameRoomPage() {
     isMyTurn,
     gameStatus: gameState?.status,
     turnComparison: `${gameState?.currentTurnId} === ${playerId} = ${gameState?.currentTurnId === playerId}`,
-    myRole: myRole ? { id: myRole.id, displayName: myRole.displayName, isSpectator: myRole.isSpectator, wasInitialPlayer: myRole.wasInitialPlayer, isBot: myRole.isBot, wallsRemaining: myRole.wallsRemaining, x: myRole.x, y: myRole.y } : null,
+    myRole: myRole
+      ? {
+          id: myRole.id,
+          displayName: myRole.displayName,
+          isSpectator: myRole.isSpectator,
+          wasInitialPlayer: myRole.wasInitialPlayer,
+          isBot: myRole.isBot,
+          wallsRemaining: myRole.wallsRemaining,
+          x: myRole.x,
+          y: myRole.y,
+        }
+      : null,
     isSpectator,
-    gameStatePlayers: gameState?.players ? Array.from(gameState.players.values()).map(p => ({ id: p.id, displayName: p.displayName, isSpectator: p.isSpectator, wasInitialPlayer: p.wasInitialPlayer, isBot: p.isBot, wallsRemaining: p.wallsRemaining, x: p.x, y: p.y })) : [],
+    gameStatePlayers: gameState?.players
+      ? Array.from(gameState.players.values()).map((p) => ({
+          id: p.id,
+          displayName: p.displayName,
+          isSpectator: p.isSpectator,
+          wasInitialPlayer: p.wasInitialPlayer,
+          isBot: p.isBot,
+          wallsRemaining: p.wallsRemaining,
+          x: p.x,
+          y: p.y,
+        }))
+      : [],
     roomId,
   };
-
-
 
   // Only log debug info when gameState changes or on first load
   useEffect(() => {
     console.log("GameRoomPage state update:", debugTurnInfo);
   }, [gameState?.status, gameState?.currentTurnId, playerId]);
+
+  // Auto-ready for 1v1 bot games only (RPS, Connect4, Quoridor)
+  // Multi-bot games (Sequence, Blackjack, Splendor, MonopolyDeal) require manual ready
+  useEffect(() => {
+    if (!room || !gameState || isSpectator) return;
+    if (gameState.status !== "waiting") return;
+
+    // Check if there's exactly one bot (1v1 game)
+    const players = gameState.players ? Array.from(gameState.players.values()) : [];
+    const botPlayers = players.filter((p) => p.isBot);
+    const humanPlayers = players.filter((p) => !p.isBot);
+
+    // Only auto-ready if exactly 1 bot and 1 human (1v1 games)
+    const is1v1BotGame = botPlayers.length === 1 && humanPlayers.length === 1;
+
+    // Check if we're not already ready
+    const me = gameState.players?.get(playerId || "");
+    const alreadyReady = me?.isReady;
+
+    if (is1v1BotGame && !alreadyReady) {
+      console.log("Auto-readying for 1v1 bot game");
+      // Small delay for smooth transition (400ms matches the loading animation)
+      setTimeout(() => {
+        room.send("ready");
+      }, 400);
+    }
+  }, [room, gameState, isSpectator, playerId]);
 
   // Define callbacks after isSpectator is available
   const handleReady = useCallback(() => {
@@ -427,51 +609,98 @@ export default function GameRoomPage() {
     router.push("/lobby");
   }, [leaveRoom, router]);
 
-  const handleConnect4Move = useCallback((column: number) => {
-    if (room && !isSpectator) room.send("move", { column });
-  }, [room, isSpectator]);
+  const handleConnect4Move = useCallback(
+    (column: number) => {
+      if (room && !isSpectator) room.send("move", { column });
+    },
+    [room, isSpectator]
+  );
 
-  const handleRPSChoice = useCallback((choice: RPSChoice) => {
-    if (room && !isSpectator) room.send("move", { choice });
-  }, [room, isSpectator]);
+  const handleRPSChoice = useCallback(
+    (choice: RPSChoice) => {
+      if (room && !isSpectator) room.send("move", { choice });
+    },
+    [room, isSpectator]
+  );
 
-  const handleQuoridorMove = useCallback((x: number, y: number) => {
-    console.log("Sending Quoridor move:", { type: "move", x, y, playerId, isMyTurn, room: !!room, isSpectator });
-    if (room && !isSpectator) room.send("move", { type: "move", x, y });
-  }, [room, isSpectator, playerId, isMyTurn]);
+  const handleQuoridorMove = useCallback(
+    (x: number, y: number) => {
+      console.log("Sending Quoridor move:", {
+        type: "move",
+        x,
+        y,
+        playerId,
+        isMyTurn,
+        room: !!room,
+        isSpectator,
+      });
+      if (room && !isSpectator) room.send("move", { type: "move", x, y });
+    },
+    [room, isSpectator, playerId, isMyTurn]
+  );
 
-  const handleQuoridorWall = useCallback((x: number, y: number, orientation: "horizontal" | "vertical") => {
-    console.log("Sending Quoridor wall:", { type: "wall", x, y, orientation, playerId, isMyTurn, room: !!room, isSpectator });
-    if (room && !isSpectator) room.send("move", { type: "wall", x, y, orientation });
-  }, [room, isSpectator, playerId, isMyTurn]);
+  const handleQuoridorWall = useCallback(
+    (x: number, y: number, orientation: "horizontal" | "vertical") => {
+      console.log("Sending Quoridor wall:", {
+        type: "wall",
+        x,
+        y,
+        orientation,
+        playerId,
+        isMyTurn,
+        room: !!room,
+        isSpectator,
+      });
+      if (room && !isSpectator) room.send("move", { type: "wall", x, y, orientation });
+    },
+    [room, isSpectator, playerId, isMyTurn]
+  );
 
-  const handleSequenceMove = useCallback((cardIndex: number, boardX: number, boardY: number) => {
-    if (room && !isSpectator) room.send("move", { cardIndex, boardX, boardY });
-  }, [room, isSpectator]);
+  const handleSequenceMove = useCallback(
+    (cardIndex: number, boardX: number, boardY: number) => {
+      if (room && !isSpectator) room.send("move", { cardIndex, boardX, boardY });
+    },
+    [room, isSpectator]
+  );
 
-  const handleCatanAction = useCallback((action: string, data: Record<string, unknown>) => {
-    if (room && !isSpectator) room.send("move", { action, ...data });
-  }, [room, isSpectator]);
+  const handleCatanAction = useCallback(
+    (action: string, data: Record<string, unknown>) => {
+      if (room && !isSpectator) room.send("move", { action, ...data });
+    },
+    [room, isSpectator]
+  );
 
-  const handleSplendorAction = useCallback((action: string, data: Record<string, unknown>) => {
-    if (room && !isSpectator) room.send("move", { action, ...data });
-  }, [room, isSpectator]);
+  const handleSplendorAction = useCallback(
+    (action: string, data: Record<string, unknown>) => {
+      if (room && !isSpectator) room.send("move", { action, ...data });
+    },
+    [room, isSpectator]
+  );
 
-  const handleMonopolyDealAction = useCallback((action: string, data: Record<string, unknown>) => {
-    if (room && !isSpectator) room.send("move", { action, ...data });
-  }, [room, isSpectator]);
+  const handleMonopolyDealAction = useCallback(
+    (action: string, data: Record<string, unknown>) => {
+      if (room && !isSpectator) room.send("move", { action, ...data });
+    },
+    [room, isSpectator]
+  );
 
-  const handleBlackjackAction = useCallback((action: string, data: Record<string, unknown>) => {
-    if (room && !isSpectator) room.send("move", { action, ...data });
-  }, [room, isSpectator]);
+  const handleBlackjackAction = useCallback(
+    (action: string, data: Record<string, unknown>) => {
+      if (room && !isSpectator) room.send("move", { action, ...data });
+    },
+    [room, isSpectator]
+  );
 
-  const handleSendChat = useCallback((e: React.FormEvent) => {
-    e.preventDefault();
-    if (room && chatInput.trim()) {
-      room.send("chat", { message: chatInput.trim() });
-      setChatInput("");
-    }
-  }, [room, chatInput]);
+  const handleSendChat = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (room && chatInput.trim()) {
+        room.send("chat", { message: chatInput.trim() });
+        setChatInput("");
+      }
+    },
+    [room, chatInput]
+  );
 
   const handlePlayAgain = useCallback(async () => {
     const targetGame = gameType || normalizeGameType(room?.name);
@@ -482,7 +711,10 @@ export default function GameRoomPage() {
     try {
       const isBotRoom = room?.name?.includes("_bot");
       let newRoomId: string | null = null;
-      if (isBotRoom && (targetGame === GameType.CONNECT4 || targetGame === GameType.ROCK_PAPER_SCISSORS)) {
+      if (
+        isBotRoom &&
+        (targetGame === GameType.CONNECT4 || targetGame === GameType.ROCK_PAPER_SCISSORS)
+      ) {
         newRoomId = await createBotRoom(targetGame, "medium");
       } else {
         newRoomId = await createRoom(targetGame);
@@ -503,12 +735,14 @@ export default function GameRoomPage() {
         <div className="flex flex-col items-center justify-center min-h-[400px]">
           <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mb-4" />
           <p className="text-surface-400">
-            {reconnectAttempts > 0 
+            {reconnectAttempts > 0
               ? `Reconnecting... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
               : "Connecting to room..."}
           </p>
           {reconnectAttempts > 0 && (
-            <p className="text-surface-500 text-sm mt-2">Please wait while we try to restore your connection</p>
+            <p className="text-surface-500 text-sm mt-2">
+              Please wait while we try to restore your connection
+            </p>
           )}
         </div>
       </div>
@@ -521,8 +755,18 @@ export default function GameRoomPage() {
       <div className="container mx-auto px-4 py-8">
         <div className="card p-8 max-w-md mx-auto text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-error/20 flex items-center justify-center">
-            <svg className="w-8 h-8 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <svg
+              className="w-8 h-8 text-error"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
             </svg>
           </div>
           <h2 className="text-xl font-semibold mb-2">Connection Failed</h2>
@@ -555,7 +799,12 @@ export default function GameRoomPage() {
               className="text-surface-400 hover:text-surface-200 text-sm inline-flex items-center gap-1 mb-2"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                />
               </svg>
               Back to Lobby
             </Link>
@@ -573,7 +822,15 @@ export default function GameRoomPage() {
           <div className="text-right">
             <p className="text-surface-500 text-xs font-mono">Room: {roomId.slice(0, 8)}</p>
             <p className="text-surface-400 text-sm mt-1">
-              {!gameState ? "Connecting..." : isWaiting ? "Waiting..." : isPlaying ? "In Progress" : isFinished ? "Finished" : "Loading..."}
+              {!gameState
+                ? "Connecting..."
+                : isWaiting
+                  ? "Waiting..."
+                  : isPlaying
+                    ? "In Progress"
+                    : isFinished
+                      ? "Finished"
+                      : "Loading..."}
               {disconnectedCode !== null ? ` • Disconnected (${disconnectedCode})` : ""}
             </p>
           </div>
@@ -585,8 +842,18 @@ export default function GameRoomPage() {
           {!gameState && (
             <div className="text-center py-12">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center mx-auto mb-6 animate-spin">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <svg
+                  className="w-8 h-8 text-white"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
                 </svg>
               </div>
               <h2 className="text-xl font-semibold mb-2">Loading Game...</h2>
@@ -606,8 +873,18 @@ export default function GameRoomPage() {
           {isWaiting && gameState && (
             <div className="text-center py-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center mx-auto mb-6">
-                <svg className="w-10 h-10 text-white animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <svg
+                  className="w-10 h-10 text-white animate-pulse"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
                 </svg>
               </div>
               <h2 className="text-xl font-semibold mb-2">
@@ -616,12 +893,13 @@ export default function GameRoomPage() {
               <p className="text-surface-400 mb-6">
                 {isSpectator
                   ? "You're watching this game. More players can join at any time."
-                  : "The game will start when all players are ready."
-                }
+                  : "The game will start when all players are ready."}
               </p>
               {!isSpectator && (
                 <div className="mb-6">
-                  <Button onClick={handleReady} variant="primary">Ready</Button>
+                  <Button onClick={handleReady} variant="primary">
+                    Ready
+                  </Button>
                 </div>
               )}
               <div className="p-4 bg-surface-800/50 rounded-xl max-w-sm mx-auto">
@@ -640,166 +918,166 @@ export default function GameRoomPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, ease: "easeOut" }}
             >
-
               {/* Connect 4 */}
               {resolvedGameType === GameType.CONNECT4 && (
-            <>
-              {gameState ? (
-                <Connect4Board
-                  board={gameState.board || []}
-                  currentTurn={gameState.currentTurnId}
+                <>
+                  {gameState ? (
+                    <Connect4Board
+                      board={gameState.board || []}
+                      currentTurn={gameState.currentTurnId}
+                      playerId={playerId || ""}
+                      player1Id={gameState.player1Id || ""}
+                      player2Id={gameState.player2Id || ""}
+                      isMyTurn={isMyTurn}
+                      onColumnClick={handleConnect4Move}
+                      winnerId={gameState.winnerId}
+                      isFinished={isFinished}
+                      turnStartedAt={gameState.turnStartedAt}
+                      turnTimeLimit={gameState.turnTimeLimit}
+                    />
+                  ) : null}
+                </>
+              )}
+
+              {/* RPS */}
+              {isPlaying && resolvedGameType === GameType.ROCK_PAPER_SCISSORS && gameState && (
+                <RPSGame
+                  roundNumber={gameState.roundNumber || 1}
+                  targetScore={gameState.targetScore || 3}
+                  player1Score={gameState.player1Score || 0}
+                  player2Score={gameState.player2Score || 0}
+                  player1Choice={gameState.player1Choice || ""}
+                  player2Choice={gameState.player2Choice || ""}
+                  player1Committed={gameState.player1Committed || false}
+                  player2Committed={gameState.player2Committed || false}
+                  phase={gameState.phase || "commit"}
+                  roundWinnerId={gameState.roundWinnerId || ""}
                   playerId={playerId || ""}
                   player1Id={gameState.player1Id || ""}
-                  player2Id={gameState.player2Id || ""}
-                  isMyTurn={isMyTurn}
-                  onColumnClick={handleConnect4Move}
-                  winnerId={gameState.winnerId}
-                  isFinished={isFinished}
+                  onChoice={handleRPSChoice}
                   turnStartedAt={gameState.turnStartedAt}
                   turnTimeLimit={gameState.turnTimeLimit}
+                  players={gameState.players}
                 />
-              ) : null}
-            </>
-          )}
+              )}
 
-          {/* RPS */}
-          {isPlaying && resolvedGameType === GameType.ROCK_PAPER_SCISSORS && gameState && (
-            <RPSGame
-              roundNumber={gameState.roundNumber || 1}
-              targetScore={gameState.targetScore || 3}
-              player1Score={gameState.player1Score || 0}
-              player2Score={gameState.player2Score || 0}
-              player1Choice={gameState.player1Choice || ""}
-              player2Choice={gameState.player2Choice || ""}
-              player1Committed={gameState.player1Committed || false}
-              player2Committed={gameState.player2Committed || false}
-              phase={gameState.phase || "commit"}
-              roundWinnerId={gameState.roundWinnerId || ""}
-              playerId={playerId || ""}
-              player1Id={gameState.player1Id || ""}
-              onChoice={handleRPSChoice}
-              turnStartedAt={gameState.turnStartedAt}
-              turnTimeLimit={gameState.turnTimeLimit}
-            />
-          )}
+              {/* Quoridor */}
+              {(isPlaying || isFinished) && resolvedGameType === GameType.QUORIDOR && gameState && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+                  <QuoridorBoard
+                    boardSize={gameState.boardSize || 9}
+                    players={gameState.players || new Map()}
+                    walls={gameState.walls || []}
+                    currentTurnId={gameState.currentTurnId}
+                    playerId={playerId || ""}
+                    isMyTurn={isMyTurn}
+                    onMove={handleQuoridorMove}
+                    onPlaceWall={handleQuoridorWall}
+                    turnStartedAt={gameState.turnStartedAt}
+                    turnTimeLimit={gameState.turnTimeLimit}
+                    winnerId={gameState.winnerId}
+                    isFinished={isFinished}
+                  />
+                </div>
+              )}
 
-          {/* Quoridor */}
-          {(isPlaying || isFinished) && resolvedGameType === GameType.QUORIDOR && gameState && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-              <QuoridorBoard
-              boardSize={gameState.boardSize || 9}
-              players={gameState.players || new Map()}
-              walls={gameState.walls || []}
-              currentTurnId={gameState.currentTurnId}
-              playerId={playerId || ""}
-              isMyTurn={isMyTurn}
-              onMove={handleQuoridorMove}
-              onPlaceWall={handleQuoridorWall}
-              turnStartedAt={gameState.turnStartedAt}
-              turnTimeLimit={gameState.turnTimeLimit}
-              winnerId={gameState.winnerId}
-              isFinished={isFinished}
-            />
-            </div>
-          )}
-
-          {/* Sequence */}
+              {/* Sequence */}
               {resolvedGameType === GameType.SEQUENCE && (
-            <SequenceBoard
-              chips={gameState.chips || []}
-              hand={gameState.players?.get(playerId || "")?.hand || []}
-              currentTurnId={gameState.currentTurnId}
-              playerId={playerId || ""}
-              teamId={gameState.players?.get(playerId || "")?.teamId || 0}
-              team1Sequences={gameState.team1Sequences || 0}
-              team2Sequences={gameState.team2Sequences || 0}
-              sequencesToWin={gameState.sequencesToWin || 2}
-              isMyTurn={isMyTurn}
-              onPlayCard={handleSequenceMove}
-            />
-          )}
+                <SequenceBoard
+                  chips={gameState.chips || []}
+                  hand={gameState.players?.get(playerId || "")?.hand || []}
+                  currentTurnId={gameState.currentTurnId}
+                  playerId={playerId || ""}
+                  teamId={gameState.players?.get(playerId || "")?.teamId || 0}
+                  team1Sequences={gameState.team1Sequences || 0}
+                  team2Sequences={gameState.team2Sequences || 0}
+                  sequencesToWin={gameState.sequencesToWin || 2}
+                  isMyTurn={isMyTurn}
+                  onPlayCard={handleSequenceMove}
+                />
+              )}
 
-          {/* Catan */}
-          {isPlaying && resolvedGameType === GameType.CATAN && gameState && (
-            <CatanBoard
-              tiles={gameState.tiles || []}
-              vertices={gameState.vertices || new Map()}
-              edges={gameState.edges || new Map()}
-              players={gameState.players || new Map()}
-              currentTurnId={gameState.currentTurnId}
-              playerId={playerId || ""}
-              phase={gameState.phase || "roll"}
-              lastDiceRoll={gameState.lastDiceRoll || 0}
-              isMyTurn={isMyTurn}
-              onAction={handleCatanAction}
-            />
-          )}
-
-          {/* Splendor */}
-          {isPlaying && resolvedGameType === GameType.SPLENDOR && (
-            <>
-              {gameState ? (
-                <SplendorBoard
-                  bank={{
-                    white: gameState.bankWhite || 0,
-                    blue: gameState.bankBlue || 0,
-                    green: gameState.bankGreen || 0,
-                    red: gameState.bankRed || 0,
-                    black: gameState.bankBlack || 0,
-                    gold: gameState.bankGold || 0,
-                  }}
-                  tier1Cards={gameState.tier1Cards || []}
-                  tier2Cards={gameState.tier2Cards || []}
-                  tier3Cards={gameState.tier3Cards || []}
-                  nobles={gameState.nobles || []}
+              {/* Catan */}
+              {isPlaying && resolvedGameType === GameType.CATAN && gameState && (
+                <CatanBoard
+                  tiles={gameState.tiles || []}
+                  vertices={gameState.vertices || new Map()}
+                  edges={gameState.edges || new Map()}
                   players={gameState.players || new Map()}
                   currentTurnId={gameState.currentTurnId}
                   playerId={playerId || ""}
-                  phase={gameState.phase || "take_gems"}
+                  phase={gameState.phase || "roll"}
+                  lastDiceRoll={gameState.lastDiceRoll || 0}
                   isMyTurn={isMyTurn}
-                  onAction={handleSplendorAction}
+                  onAction={handleCatanAction}
                 />
-              ) : null}
-            </>
-          )}
+              )}
 
-          {/* Monopoly Deal */}
-          {isPlaying && resolvedGameType === GameType.MONOPOLY_DEAL && gameState && (
-            <MonopolyDealBoard
-              players={gameState.players || new Map()}
-              currentTurnId={gameState.currentTurnId}
-              playerId={playerId || ""}
-              phase={gameState.phase || "draw"}
-              deckRemaining={gameState.deckRemaining || 0}
-              discardPile={gameState.discardPile || []}
-              actionStack={gameState.actionStack || []}
-              activeResponderId={gameState.activeResponderId || ""}
-              isMyTurn={isMyTurn}
-              onAction={handleMonopolyDealAction}
-            />
-          )}
+              {/* Splendor */}
+              {isPlaying && resolvedGameType === GameType.SPLENDOR && (
+                <>
+                  {gameState ? (
+                    <SplendorBoard
+                      bank={{
+                        white: gameState.bankWhite || 0,
+                        blue: gameState.bankBlue || 0,
+                        green: gameState.bankGreen || 0,
+                        red: gameState.bankRed || 0,
+                        black: gameState.bankBlack || 0,
+                        gold: gameState.bankGold || 0,
+                      }}
+                      tier1Cards={gameState.tier1Cards || []}
+                      tier2Cards={gameState.tier2Cards || []}
+                      tier3Cards={gameState.tier3Cards || []}
+                      nobles={gameState.nobles || []}
+                      players={gameState.players || new Map()}
+                      currentTurnId={gameState.currentTurnId}
+                      playerId={playerId || ""}
+                      phase={gameState.phase || "take_gems"}
+                      isMyTurn={isMyTurn}
+                      onAction={handleSplendorAction}
+                    />
+                  ) : null}
+                </>
+              )}
 
-          {/* Blackjack */}
-          {isPlaying && resolvedGameType === GameType.BLACKJACK && gameState && (
-            <BlackjackBoard
-              players={gameState.players || new Map()}
-              dealerHand={gameState.dealerHand || []}
-              dealerValue={gameState.dealerValue || 0}
-              dealerBusted={gameState.dealerBusted || false}
-              dealerBlackjack={gameState.dealerBlackjack || false}
-              currentTurnId={gameState.currentTurnId}
-              playerId={playerId || ""}
-              phase={gameState.phase || "betting"}
-              handNumber={gameState.handNumber || 1}
-              buttonPlayerId={gameState.buttonPlayerId || ""}
-              eliminationHands={gameState.eliminationHands || [8, 16, 25]}
-              minBet={gameState.minBet || 10}
-              maxBet={gameState.maxBet || 500}
-              allowSecretBets={gameState.allowSecretBets !== false}
-              isMyTurn={isMyTurn}
-              onAction={handleBlackjackAction}
-            />
-          )}
+              {/* Monopoly Deal */}
+              {isPlaying && resolvedGameType === GameType.MONOPOLY_DEAL && gameState && (
+                <MonopolyDealBoard
+                  players={gameState.players || new Map()}
+                  currentTurnId={gameState.currentTurnId}
+                  playerId={playerId || ""}
+                  phase={gameState.phase || "draw"}
+                  deckRemaining={gameState.deckRemaining || 0}
+                  discardPile={gameState.discardPile || []}
+                  actionStack={gameState.actionStack || []}
+                  activeResponderId={gameState.activeResponderId || ""}
+                  isMyTurn={isMyTurn}
+                  onAction={handleMonopolyDealAction}
+                />
+              )}
+
+              {/* Blackjack */}
+              {isPlaying && resolvedGameType === GameType.BLACKJACK && gameState && (
+                <BlackjackBoard
+                  players={gameState.players || new Map()}
+                  dealerHand={gameState.dealerHand || []}
+                  dealerValue={gameState.dealerValue || 0}
+                  dealerBusted={gameState.dealerBusted || false}
+                  dealerBlackjack={gameState.dealerBlackjack || false}
+                  currentTurnId={gameState.currentTurnId}
+                  playerId={playerId || ""}
+                  phase={gameState.phase || "betting"}
+                  handNumber={gameState.handNumber || 1}
+                  buttonPlayerId={gameState.buttonPlayerId || ""}
+                  eliminationHands={gameState.eliminationHands || [8, 16, 25]}
+                  minBet={gameState.minBet || 10}
+                  maxBet={gameState.maxBet || 500}
+                  allowSecretBets={gameState.allowSecretBets !== false}
+                  isMyTurn={isMyTurn}
+                  onAction={handleBlackjackAction}
+                />
+              )}
             </motion.div>
           )}
 
@@ -808,9 +1086,15 @@ export default function GameRoomPage() {
             <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
               <div className="absolute inset-0 bg-surface-950/70 backdrop-blur-sm" />
               <div className="relative card max-w-md w-full p-6 text-center">
-                <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 ${
-                  gameState.isDraw ? "bg-surface-700" : gameState.winnerId === playerId ? "bg-success/20" : "bg-error/20"
-                }`}>
+                <div
+                  className={`w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 ${
+                    gameState.isDraw
+                      ? "bg-surface-700"
+                      : gameState.winnerId === playerId
+                        ? "bg-success/20"
+                        : "bg-error/20"
+                  }`}
+                >
                   {gameState.isDraw ? (
                     <span className="text-4xl">🤝</span>
                   ) : gameState.winnerId === playerId ? (
@@ -820,16 +1104,26 @@ export default function GameRoomPage() {
                   )}
                 </div>
                 <h2 className="text-2xl font-bold mb-2">
-                  {gameState.isDraw ? "It's a Draw!" : gameState.winnerId === playerId ? "You Won!" : "You Lost"}
+                  {gameState.isDraw
+                    ? "It's a Draw!"
+                    : gameState.winnerId === playerId
+                      ? "You Won!"
+                      : "You Lost"}
                 </h2>
                 <p className="text-surface-400 mb-6">
-                  {gameState.isDraw ? "Great game! It was close." : gameState.winnerId === playerId ? "Congratulations!" : "Better luck next time!"}
+                  {gameState.isDraw
+                    ? "Great game! It was close."
+                    : gameState.winnerId === playerId
+                      ? "Congratulations!"
+                      : "Better luck next time!"}
                 </p>
                 <div className="flex gap-4 justify-center">
                   <Button variant="primary" onClick={handlePlayAgain} isLoading={isReplaying}>
                     Play Again
                   </Button>
-                  <Button variant="secondary" onClick={handleLeave}>Back to Lobby</Button>
+                  <Button variant="secondary" onClick={handleLeave}>
+                    Back to Lobby
+                  </Button>
                 </div>
               </div>
             </div>
@@ -839,7 +1133,9 @@ export default function GameRoomPage() {
         {/* Actions */}
         {!isFinished && gameState && (
           <div className="mt-6 flex justify-center">
-            <Button variant="ghost" onClick={handleLeave}>Leave Room</Button>
+            <Button variant="ghost" onClick={handleLeave}>
+              Leave Room
+            </Button>
           </div>
         )}
       </motion.div>
@@ -851,11 +1147,21 @@ export default function GameRoomPage() {
       >
         {isChatOpen ? (
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M6 18L18 6M6 6l12 12"
+            />
           </svg>
         ) : (
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+            />
           </svg>
         )}
         {chatMessages.length > 0 && !isChatOpen && (
@@ -881,7 +1187,12 @@ export default function GameRoomPage() {
               className="text-surface-400 hover:text-white transition-colors"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -932,7 +1243,12 @@ export default function GameRoomPage() {
                 className="px-3 py-2 rounded-lg bg-primary-500 hover:bg-primary-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                  />
                 </svg>
               </button>
             </div>

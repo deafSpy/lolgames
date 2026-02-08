@@ -62,16 +62,23 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
     const moveData = data as MoveData;
     const player = this.state.players.get(client.sessionId) as QuoridorPlayer;
 
-    logger.info({
-      roomId: this.roomId,
-      playerId: client.sessionId,
-      currentTurnId: this.state.currentTurnId,
-      moveType: moveData.type,
-      x: moveData.x,
-      y: moveData.y,
-      orientation: moveData.orientation,
-      players: Array.from(this.state.players.values()).map(p => ({ id: p.id, displayName: p.displayName, isBot: p.isBot }))
-    }, "Quoridor move received");
+    logger.info(
+      {
+        roomId: this.roomId,
+        playerId: client.sessionId,
+        currentTurnId: this.state.currentTurnId,
+        moveType: moveData.type,
+        x: moveData.x,
+        y: moveData.y,
+        orientation: moveData.orientation,
+        players: Array.from(this.state.players.values()).map((p) => ({
+          id: p.id,
+          displayName: p.displayName,
+          isBot: p.isBot,
+        })),
+      },
+      "Quoridor move received"
+    );
 
     if (!player) {
       client.send("error", { message: "Player not found" });
@@ -81,7 +88,13 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
     if (moveData.type === "move") {
       this.handlePawnMove(client, player, moveData.x, moveData.y);
     } else if (moveData.type === "wall") {
-      this.handleWallPlace(client, player, moveData.x, moveData.y, moveData.orientation || "horizontal");
+      this.handleWallPlace(
+        client,
+        player,
+        moveData.x,
+        moveData.y,
+        moveData.orientation || "horizontal"
+      );
     } else {
       client.send("error", { message: "Invalid move type" });
     }
@@ -108,10 +121,7 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
     player.x = x;
     player.y = y;
 
-    logger.info(
-      { roomId: this.roomId, playerId: client.sessionId, x, y },
-      "Pawn moved"
-    );
+    logger.info({ roomId: this.roomId, playerId: client.sessionId, x, y }, "Pawn moved");
 
     this.broadcast("pawn_moved", { playerId: client.sessionId, x, y });
 
@@ -125,7 +135,13 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
     this.nextTurn();
   }
 
-  protected isValidPawnMove(fromX: number, fromY: number, toX: number, toY: number, opponentPos: Position | null): boolean {
+  protected isValidPawnMove(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    opponentPos: Position | null
+  ): boolean {
     const dx = toX - fromX;
     const dy = toY - fromY;
     const absDx = Math.abs(dx);
@@ -161,27 +177,30 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
     // Diagonal jump (when straight jump is blocked)
     if (absDx === 1 && absDy === 1) {
       if (!opponentPos) return false;
-      
+
       // Check if opponent is adjacent
       const oppDx = opponentPos.x - fromX;
       const oppDy = opponentPos.y - fromY;
       if (!(Math.abs(oppDx) === 1 && oppDy === 0) && !(oppDx === 0 && Math.abs(oppDy) === 1)) {
         return false;
       }
-      
+
       // Check if there's a wall behind the opponent (or edge of board)
       const behindX = opponentPos.x + oppDx;
       const behindY = opponentPos.y + oppDy;
-      const blocked = behindX < 0 || behindX >= this.state.boardSize ||
-                      behindY < 0 || behindY >= this.state.boardSize ||
-                      this.isWallBlocking(opponentPos.x, opponentPos.y, behindX, behindY);
-      
+      const blocked =
+        behindX < 0 ||
+        behindX >= this.state.boardSize ||
+        behindY < 0 ||
+        behindY >= this.state.boardSize ||
+        this.isWallBlocking(opponentPos.x, opponentPos.y, behindX, behindY);
+
       if (!blocked) return false;
-      
+
       // Check if path to diagonal is not blocked
       if (this.isWallBlocking(fromX, fromY, opponentPos.x, opponentPos.y)) return false;
       if (this.isWallBlocking(opponentPos.x, opponentPos.y, toX, toY)) return false;
-      
+
       return true;
     }
 
@@ -209,7 +228,16 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
 
     // Check for wall collisions
     for (const wall of this.state.walls) {
-      if (this.wallsCollide(x, y, orientation, wall.x, wall.y, wall.orientation as "horizontal" | "vertical")) {
+      if (
+        this.wallsCollide(
+          x,
+          y,
+          orientation,
+          wall.x,
+          wall.y,
+          wall.orientation as "horizontal" | "vertical"
+        )
+      ) {
         client.send("error", { message: "Wall collides with existing wall" });
         return;
       }
@@ -258,9 +286,13 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
     this.nextTurn();
   }
 
-  private wallsCollide(
-    x1: number, y1: number, o1: "horizontal" | "vertical",
-    x2: number, y2: number, o2: "horizontal" | "vertical"
+  protected wallsCollide(
+    x1: number,
+    y1: number,
+    o1: "horizontal" | "vertical",
+    x2: number,
+    y2: number,
+    o2: "horizontal" | "vertical"
   ): boolean {
     // Same center position = collision
     if (x1 === x2 && y1 === y2) return true;
@@ -300,8 +332,12 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
 
       for (const neighbor of neighbors) {
         // Check bounds
-        if (neighbor.x < 0 || neighbor.x >= this.state.boardSize ||
-            neighbor.y < 0 || neighbor.y >= this.state.boardSize) {
+        if (
+          neighbor.x < 0 ||
+          neighbor.x >= this.state.boardSize ||
+          neighbor.y < 0 ||
+          neighbor.y >= this.state.boardSize
+        ) {
           continue;
         }
 

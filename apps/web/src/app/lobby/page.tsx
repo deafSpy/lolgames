@@ -30,7 +30,6 @@ const gameColors: Record<GameType, string> = {
   [GameType.BLACKJACK]: "from-slate-700 to-slate-900",
 };
 
-
 export default function LobbyPage() {
   return (
     <Suspense fallback={<LobbyLoadingSkeleton />}>
@@ -80,21 +79,23 @@ function LobbyContent() {
 
   // Fetch rooms on mount and periodically
   useEffect(() => {
-    console.log('Lobby: Setting up room fetching');
+    console.log("Lobby: Setting up room fetching");
     fetchRooms();
     const interval = setInterval(() => {
-      console.log('Lobby: Fetching rooms periodically');
+      console.log("Lobby: Fetching rooms periodically");
       fetchRooms();
     }, 5000); // Refresh every 5 seconds
     return () => clearInterval(interval);
   }, [fetchRooms]);
 
   const handleCreateRoom = useCallback(
-    async (gameType: GameType, vsBot = false, difficulty: "easy" | "medium" | "hard" = "medium") => {
+    async (
+      gameType: GameType,
+      vsBot = false,
+      difficulty: "easy" | "medium" | "hard" = "medium"
+    ) => {
       setIsCreating(false);
-      const roomId = vsBot
-        ? await createBotRoom(gameType, difficulty)
-        : await createRoom(gameType);
+      const roomId = vsBot ? await createBotRoom(gameType, difficulty) : await createRoom(gameType);
       if (roomId) {
         router.push(`/game/${roomId}`);
       }
@@ -204,9 +205,7 @@ function LobbyContent() {
                 </svg>
               </div>
               <p className="text-surface-400 mb-4">No rooms available</p>
-              <p className="text-surface-500 text-sm mb-6">
-                Be the first to create a game!
-              </p>
+              <p className="text-surface-500 text-sm mb-6">Be the first to create a game!</p>
               <div className="flex gap-3 justify-center">
                 <Button
                   onClick={() => {
@@ -249,13 +248,12 @@ function LobbyContent() {
           onClose={() => setIsCreating(false)}
           onCreate={handleCreateRoom}
           isCreating={isConnecting}
-          preselectedGame={preselectedGame as GameType || undefined}
+          preselectedGame={(preselectedGame as GameType) || undefined}
         />
       )}
     </div>
   );
 }
-
 
 function RoomCard({
   room,
@@ -268,6 +266,7 @@ function RoomCard({
 }) {
   const timeAgo = Math.floor((Date.now() - room.createdAt) / 60000);
   const isFull = room.playerCount >= room.maxPlayers;
+  const isInProgress = room.status === GameStatus.IN_PROGRESS;
 
   return (
     <div className="card p-4">
@@ -280,21 +279,26 @@ function RoomCard({
           </div>
           <div>
             <div className="font-medium text-white">{room.hostName}</div>
-            <div className="text-xs text-surface-400">{gameLabels[room.gameType]}</div>
+            <div className="text-xs text-surface-400 flex items-center gap-2">
+              {gameLabels[room.gameType]}
+              {room.vsBot && (
+                <span className="inline-flex items-center rounded-full bg-accent/20 px-1.5 py-0.5 text-xs text-accent">
+                  🤖 Bot
+                </span>
+              )}
+            </div>
           </div>
         </div>
-        {room.status === GameStatus.IN_PROGRESS && (
-          <span className="text-xs px-2 py-1 rounded-full bg-warning/20 text-warning">
-            Playing
+        {isInProgress && (
+          <span className="text-xs px-2 py-1 rounded-full bg-success/20 text-success border border-success/50">
+            In Progress
           </span>
         )}
       </div>
 
       <div className="flex items-center justify-between">
         <div className="text-sm text-surface-400">
-          <span className={
-            isFull ? "text-error" : room.playerCount > 0 ? "text-success" : ""
-          }>
+          <span className={isFull ? "text-error" : room.playerCount > 0 ? "text-success" : ""}>
             {room.playerCount}/{room.maxPlayers} players
           </span>
           <span className="mx-2">•</span>
@@ -303,12 +307,12 @@ function RoomCard({
 
         <Button
           onClick={onJoin}
-          variant={isFull ? "secondary" : "primary"}
+          variant={isInProgress ? "secondary" : isFull ? "ghost" : "primary"}
           size="sm"
-          disabled={isFull || isJoining}
+          disabled={isJoining}
           isLoading={isJoining}
         >
-          {isFull ? "Full" : "Join"}
+          {isInProgress ? "Spectate" : isFull ? "Full" : "Join"}
         </Button>
       </div>
     </div>
@@ -331,14 +335,23 @@ function CreateRoomModal({
   const [vsBot, setVsBot] = useState(false);
   const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">("medium");
 
-  const availableGames = [GameType.CONNECT4, GameType.ROCK_PAPER_SCISSORS, GameType.QUORIDOR, GameType.SEQUENCE, GameType.SPLENDOR, GameType.MONOPOLY_DEAL, GameType.BLACKJACK];
-  const botSupported = selectedGame === GameType.CONNECT4 || 
-                       selectedGame === GameType.ROCK_PAPER_SCISSORS || 
-                       selectedGame === GameType.QUORIDOR ||
-                       selectedGame === GameType.SEQUENCE ||
-                       selectedGame === GameType.SPLENDOR ||
-                       selectedGame === GameType.MONOPOLY_DEAL ||
-                       selectedGame === GameType.BLACKJACK;
+  const availableGames = [
+    GameType.CONNECT4,
+    GameType.ROCK_PAPER_SCISSORS,
+    GameType.QUORIDOR,
+    GameType.SEQUENCE,
+    GameType.SPLENDOR,
+    GameType.MONOPOLY_DEAL,
+    GameType.BLACKJACK,
+  ];
+  const botSupported =
+    selectedGame === GameType.CONNECT4 ||
+    selectedGame === GameType.ROCK_PAPER_SCISSORS ||
+    selectedGame === GameType.QUORIDOR ||
+    selectedGame === GameType.SEQUENCE ||
+    selectedGame === GameType.SPLENDOR ||
+    selectedGame === GameType.MONOPOLY_DEAL ||
+    selectedGame === GameType.BLACKJACK;
 
   const handleGameSelect = (gameType: GameType) => {
     setSelectedGame(gameType);
@@ -375,9 +388,7 @@ function CreateRoomModal({
         {mode === "select" ? (
           <>
             <h2 className="text-xl font-display font-semibold mb-4">Create a Room</h2>
-            <p className="text-surface-400 text-sm mb-6">
-              Choose a game to create a new room
-            </p>
+            <p className="text-surface-400 text-sm mb-6">Choose a game to create a new room</p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
               {availableGames.map((gameType) => (
@@ -420,7 +431,12 @@ function CreateRoomModal({
                 className="p-2 rounded-lg hover:bg-surface-800 transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 19l-7-7 7-7"
+                  />
                 </svg>
               </button>
               <div>

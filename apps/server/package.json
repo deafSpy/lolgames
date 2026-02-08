@@ -4,15 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "NODE_ENV=development tsx watch src/index.ts",
     "build": "tsup",
-    "start": "node dist/index.js",
+    "start": "NODE_ENV=production node dist/index.js",
+    "start:dev": "NODE_ENV=development node dist/index.js",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "env:setup": "cp .env.development .env && echo '✅ Created .env from .env.development - Update with your secrets!'",
+    "env:check": "node -e \"require('dotenv').config(); console.log('Environment:', process.env.NODE_ENV); console.log('Database:', process.env.DATABASE_ENABLED === 'true' ? 'Enabled' : 'Disabled'); console.log('Redis:', process.env.REDIS_ENABLED === 'true' ? 'Enabled' : 'Disabled');\""
   },
   "dependencies": {
     "@colyseus/auth": "^0.16.6",
@@ -26,12 +29,15 @@
     "colyseus": "^0.16.5",
     "dotenv": "^16.3.1",
     "fastify": "^4.25.0",
+    "ioredis": "^5.9.2",
     "nanoid": "^5.0.4",
+    "pg": "^8.18.0",
     "pino": "^8.17.0",
     "pino-pretty": "^10.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "@types/pg": "^8.16.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "tsup": "^8.0.0",

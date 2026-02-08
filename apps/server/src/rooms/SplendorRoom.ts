@@ -264,7 +264,7 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     player.isReady = false;
     player.isConnected = true;
     player.joinedAt = Date.now();
-    
+
     player.gemWhite = 0;
     player.gemBlue = 0;
     player.gemGreen = 0;
@@ -373,7 +373,7 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
   private handleTakeGems(client: Client, player: SplendorPlayerSchema, data: TakeGemsData): void {
     const gems = data.gems;
     const gemTypes = Object.keys(gems) as GemOrGold[];
-    
+
     // Can't take gold directly
     if (gems.gold && gems.gold > 0) {
       client.send("error", { message: "Cannot take gold tokens directly" });
@@ -384,8 +384,8 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     const totalTaking = Object.values(gems).reduce((sum, n) => sum + (n || 0), 0);
 
     // Validate the take action
-    const distinctColors = gemTypes.filter(g => (gems[g] || 0) > 0);
-    
+    const distinctColors = gemTypes.filter((g) => (gems[g] || 0) > 0);
+
     // Option 1: Take 3 different colors (1 each)
     // Option 2: Take 2 of the same color (if 4+ available in bank)
     if (distinctColors.length === 3) {
@@ -447,7 +447,7 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
 
     // Check table first
     for (const t of [this.state.tier1Cards, this.state.tier2Cards, this.state.tier3Cards]) {
-      const idx = Array.from(t).findIndex(c => c.id === data.cardId);
+      const idx = Array.from(t).findIndex((c) => c.id === data.cardId);
       if (idx !== -1) {
         card = t[idx];
         cardIndex = idx;
@@ -458,7 +458,7 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
 
     // Check reserved
     if (!card) {
-      const idx = Array.from(player.reserved).findIndex(c => c.id === data.cardId);
+      const idx = Array.from(player.reserved).findIndex((c) => c.id === data.cardId);
       if (idx !== -1) {
         card = player.reserved[idx];
         cardIndex = idx;
@@ -519,7 +519,7 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     if (cardSource === "table" && tier) {
       tier.splice(cardIndex, 1);
       // Refill from deck
-      this.refillTier(card.tier);
+      this.refillTier(card.tier as 1 | 2 | 3);
     } else {
       player.reserved.splice(cardIndex, 1);
     }
@@ -530,7 +530,11 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     this.checkNobles(client, player);
   }
 
-  private handleReserveCard(client: Client, player: SplendorPlayerSchema, data: ReserveCardData): void {
+  private handleReserveCard(
+    client: Client,
+    player: SplendorPlayerSchema,
+    data: ReserveCardData
+  ): void {
     if (player.reserved.length >= 3) {
       client.send("error", { message: "Cannot reserve more than 3 cards" });
       return;
@@ -565,7 +569,7 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
       const tiers = [null, this.state.tier1Cards, this.state.tier2Cards, this.state.tier3Cards];
       const tier = tiers[data.tier];
       if (tier) {
-        const idx = Array.from(tier).findIndex(c => c.id === data.cardId);
+        const idx = Array.from(tier).findIndex((c) => c.id === data.cardId);
         if (idx !== -1) {
           card = tier[idx];
           tier.splice(idx, 1);
@@ -598,7 +602,11 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     }
   }
 
-  private handleDiscardGems(client: Client, player: SplendorPlayerSchema, data: DiscardGemsData): void {
+  private handleDiscardGems(
+    client: Client,
+    player: SplendorPlayerSchema,
+    data: DiscardGemsData
+  ): void {
     const currentCount = this.getPlayerGemCount(player);
     const discardCount = Object.values(data.gems).reduce((sum, n) => sum + (n || 0), 0);
 
@@ -631,22 +639,28 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     }
   }
 
-  private handleSelectNoble(client: Client, player: SplendorPlayerSchema, data: SelectNobleData): void {
-    const nobleIdx = Array.from(this.state.nobles).findIndex(n => n.id === data.nobleId);
+  private handleSelectNoble(
+    client: Client,
+    player: SplendorPlayerSchema,
+    data: SelectNobleData
+  ): void {
+    const nobleIdx = Array.from(this.state.nobles).findIndex((n) => n.id === data.nobleId);
     if (nobleIdx === -1) {
       client.send("error", { message: "Noble not found" });
       return;
     }
 
     const noble = this.state.nobles[nobleIdx];
-    
+
     // Verify player qualifies
     const cardCounts = this.getPlayerCardCounts(player);
-    if ((cardCounts.white || 0) < noble.reqWhite ||
-        (cardCounts.blue || 0) < noble.reqBlue ||
-        (cardCounts.green || 0) < noble.reqGreen ||
-        (cardCounts.red || 0) < noble.reqRed ||
-        (cardCounts.black || 0) < noble.reqBlack) {
+    if (
+      (cardCounts.white || 0) < noble.reqWhite ||
+      (cardCounts.blue || 0) < noble.reqBlue ||
+      (cardCounts.green || 0) < noble.reqGreen ||
+      (cardCounts.red || 0) < noble.reqRed ||
+      (cardCounts.black || 0) < noble.reqBlack
+    ) {
       client.send("error", { message: "Don't qualify for this noble" });
       return;
     }
@@ -666,11 +680,13 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     const qualifyingNobles: SplendorNobleSchema[] = [];
 
     for (const noble of this.state.nobles) {
-      if ((cardCounts.white || 0) >= noble.reqWhite &&
-          (cardCounts.blue || 0) >= noble.reqBlue &&
-          (cardCounts.green || 0) >= noble.reqGreen &&
-          (cardCounts.red || 0) >= noble.reqRed &&
-          (cardCounts.black || 0) >= noble.reqBlack) {
+      if (
+        (cardCounts.white || 0) >= noble.reqWhite &&
+        (cardCounts.blue || 0) >= noble.reqBlue &&
+        (cardCounts.green || 0) >= noble.reqGreen &&
+        (cardCounts.red || 0) >= noble.reqRed &&
+        (cardCounts.black || 0) >= noble.reqBlack
+      ) {
         qualifyingNobles.push(noble);
       }
     }
@@ -689,7 +705,10 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     } else {
       // Player must choose
       this.state.phase = "select_noble";
-      this.broadcast("phase_changed", { phase: "select_noble", nobles: qualifyingNobles.map(n => n.id) });
+      this.broadcast("phase_changed", {
+        phase: "select_noble",
+        nobles: qualifyingNobles.map((n) => n.id),
+      });
     }
   }
 
@@ -707,9 +726,14 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     this.broadcast("turn_ended", { playerId });
   }
 
-  private refillTier(tier: 1 | 2 | 3): void {
+  protected refillTier(tier: 1 | 2 | 3): void {
     const deck = tier === 1 ? this.tier1Deck : tier === 2 ? this.tier2Deck : this.tier3Deck;
-    const cards = tier === 1 ? this.state.tier1Cards : tier === 2 ? this.state.tier2Cards : this.state.tier3Cards;
+    const cards =
+      tier === 1
+        ? this.state.tier1Cards
+        : tier === 2
+          ? this.state.tier2Cards
+          : this.state.tier3Cards;
 
     if (deck.length > 0 && cards.length < 4) {
       cards.push(deck.pop()!);
@@ -721,75 +745,140 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
 
   private hasBankGems(gem: GemType, amount: number): boolean {
     switch (gem) {
-      case "white": return this.state.bankWhite >= amount;
-      case "blue": return this.state.bankBlue >= amount;
-      case "green": return this.state.bankGreen >= amount;
-      case "red": return this.state.bankRed >= amount;
-      case "black": return this.state.bankBlack >= amount;
+      case "white":
+        return this.state.bankWhite >= amount;
+      case "blue":
+        return this.state.bankBlue >= amount;
+      case "green":
+        return this.state.bankGreen >= amount;
+      case "red":
+        return this.state.bankRed >= amount;
+      case "black":
+        return this.state.bankBlack >= amount;
     }
   }
 
   private takeBankGems(gem: GemType, amount: number): void {
     switch (gem) {
-      case "white": this.state.bankWhite -= amount; break;
-      case "blue": this.state.bankBlue -= amount; break;
-      case "green": this.state.bankGreen -= amount; break;
-      case "red": this.state.bankRed -= amount; break;
-      case "black": this.state.bankBlack -= amount; break;
+      case "white":
+        this.state.bankWhite -= amount;
+        break;
+      case "blue":
+        this.state.bankBlue -= amount;
+        break;
+      case "green":
+        this.state.bankGreen -= amount;
+        break;
+      case "red":
+        this.state.bankRed -= amount;
+        break;
+      case "black":
+        this.state.bankBlack -= amount;
+        break;
     }
   }
 
   private returnBankGems(gem: GemType, amount: number): void {
     switch (gem) {
-      case "white": this.state.bankWhite += amount; break;
-      case "blue": this.state.bankBlue += amount; break;
-      case "green": this.state.bankGreen += amount; break;
-      case "red": this.state.bankRed += amount; break;
-      case "black": this.state.bankBlack += amount; break;
+      case "white":
+        this.state.bankWhite += amount;
+        break;
+      case "blue":
+        this.state.bankBlue += amount;
+        break;
+      case "green":
+        this.state.bankGreen += amount;
+        break;
+      case "red":
+        this.state.bankRed += amount;
+        break;
+      case "black":
+        this.state.bankBlack += amount;
+        break;
     }
   }
 
   private getPlayerGem(player: SplendorPlayerSchema, gem: GemOrGold): number {
     switch (gem) {
-      case "white": return player.gemWhite;
-      case "blue": return player.gemBlue;
-      case "green": return player.gemGreen;
-      case "red": return player.gemRed;
-      case "black": return player.gemBlack;
-      case "gold": return player.gemGold;
+      case "white":
+        return player.gemWhite;
+      case "blue":
+        return player.gemBlue;
+      case "green":
+        return player.gemGreen;
+      case "red":
+        return player.gemRed;
+      case "black":
+        return player.gemBlack;
+      case "gold":
+        return player.gemGold;
     }
   }
 
   private givePlayerGems(player: SplendorPlayerSchema, gem: GemOrGold, amount: number): void {
     switch (gem) {
-      case "white": player.gemWhite += amount; break;
-      case "blue": player.gemBlue += amount; break;
-      case "green": player.gemGreen += amount; break;
-      case "red": player.gemRed += amount; break;
-      case "black": player.gemBlack += amount; break;
-      case "gold": player.gemGold += amount; break;
+      case "white":
+        player.gemWhite += amount;
+        break;
+      case "blue":
+        player.gemBlue += amount;
+        break;
+      case "green":
+        player.gemGreen += amount;
+        break;
+      case "red":
+        player.gemRed += amount;
+        break;
+      case "black":
+        player.gemBlack += amount;
+        break;
+      case "gold":
+        player.gemGold += amount;
+        break;
     }
   }
 
   private takePlayerGems(player: SplendorPlayerSchema, gem: GemOrGold, amount: number): void {
     switch (gem) {
-      case "white": player.gemWhite -= amount; break;
-      case "blue": player.gemBlue -= amount; break;
-      case "green": player.gemGreen -= amount; break;
-      case "red": player.gemRed -= amount; break;
-      case "black": player.gemBlack -= amount; break;
-      case "gold": player.gemGold -= amount; break;
+      case "white":
+        player.gemWhite -= amount;
+        break;
+      case "blue":
+        player.gemBlue -= amount;
+        break;
+      case "green":
+        player.gemGreen -= amount;
+        break;
+      case "red":
+        player.gemRed -= amount;
+        break;
+      case "black":
+        player.gemBlack -= amount;
+        break;
+      case "gold":
+        player.gemGold -= amount;
+        break;
     }
   }
 
   private getPlayerGemCount(player: SplendorPlayerSchema): number {
-    return player.gemWhite + player.gemBlue + player.gemGreen +
-           player.gemRed + player.gemBlack + player.gemGold;
+    return (
+      player.gemWhite +
+      player.gemBlue +
+      player.gemGreen +
+      player.gemRed +
+      player.gemBlack +
+      player.gemGold
+    );
   }
 
   private getPlayerCardCounts(player: SplendorPlayerSchema): Partial<Record<GemType, number>> {
     const counts: Partial<Record<GemType, number>> = {
-      white: 0, blue: 0, green: 0, red: 0, black: 0
+      white: 0,
+      blue: 0,
+      green: 0,
+      red: 0,
+      black: 0,
     };
     for (const card of player.cards) {
       counts[card.gemType as GemType] = (counts[card.gemType as GemType] || 0) + 1;

@@ -42,6 +42,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       hostName: options.hostName || "Unknown",
       createdAt: options.createdAt || Date.now(),
       vsBot: options.vsBot || false,
+      status: "waiting", // Add status for matchmaking
     });
 
     // Set up message handlers
@@ -80,14 +81,20 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       // Player reconnected - mark as connected
       existingPlayer.isConnected = true;
       logger.info(
-        { roomId: this.roomId, playerId: client.sessionId, displayName: existingPlayer.displayName },
+        {
+          roomId: this.roomId,
+          playerId: client.sessionId,
+          displayName: existingPlayer.displayName,
+        },
         "Player reconnected"
       );
     } else {
       // New player joining
       const player = new GamePlayerSchema();
       player.id = client.sessionId;
-      player.displayName = options.playerName || `Guest_${client.sessionId.slice(0, 4)}`;
+      // Generate guest name with 4-digit random number (e.g., "Guest7382")
+      const guestNumber = Math.floor(1000 + Math.random() * 9000);
+      player.displayName = options.playerName || `Guest${guestNumber}`;
       player.isReady = false;
       player.isConnected = true;
       player.joinedAt = Date.now();
@@ -109,28 +116,50 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       };
       this.playerIdentities.set(client.sessionId, identity);
 
+      logger.info(
+        {
+          sessionId: client.sessionId,
+          identity: identity.identity,
+          userId: identity.userId,
+          browserSessionId: identity.browserSessionId,
+          displayName: identity.displayName,
+        },
+        "🔍 Player identity registered"
+      );
+
       // If game hasn't started yet, add to initial players
       if (this.state.status === "waiting") {
         this.initialPlayers.add(client.sessionId);
-        logger.info({
-          roomId: this.roomId,
-          playerId: client.sessionId,
-          initialPlayers: Array.from(this.initialPlayers),
-          gameStatus: this.state.status
-        }, "Player added to initialPlayers");
+        logger.info(
+          {
+            roomId: this.roomId,
+            playerId: client.sessionId,
+            initialPlayers: Array.from(this.initialPlayers),
+            gameStatus: this.state.status,
+          },
+          "Player added to initialPlayers"
+        );
       } else {
-        logger.info({
-          roomId: this.roomId,
-          playerId: client.sessionId,
-          initialPlayers: Array.from(this.initialPlayers),
-          gameStatus: this.state.status
-        }, "Player NOT added to initialPlayers (game already started)");
+        logger.info(
+          {
+            roomId: this.roomId,
+            playerId: client.sessionId,
+            initialPlayers: Array.from(this.initialPlayers),
+            gameStatus: this.state.status,
+          },
+          "Player NOT added to initialPlayers (game already started)"
+        );
       }
 
       this.state.players.set(client.sessionId, player);
 
       logger.info(
-        { roomId: this.roomId, playerId: client.sessionId, playerName: player.displayName, isSpectator: player.isSpectator },
+        {
+          roomId: this.roomId,
+          playerId: client.sessionId,
+          playerName: player.displayName,
+          isSpectator: player.isSpectator,
+        },
         "Player joined"
       );
     }
@@ -142,10 +171,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     const player = this.state.players.get(client.sessionId);
 
     if (player) {
-      logger.info(
-        { roomId: this.roomId, playerId: client.sessionId, consented },
-        "Player left"
-      );
+      logger.info({ roomId: this.roomId, playerId: client.sessionId, consented }, "Player left");
 
       if (consented || this.state.status === "finished") {
         // Player intentionally left or game is over
@@ -158,7 +184,10 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       } else {
         // Player disconnected - mark as disconnected but keep their data
         player.isConnected = false;
-        logger.info({ roomId: this.roomId, playerId: client.sessionId }, "Player marked as disconnected");
+        logger.info(
+          { roomId: this.roomId, playerId: client.sessionId },
+          "Player marked as disconnected"
+        );
       }
     }
 
@@ -175,7 +204,10 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
 
     if (!hasHadInitialPlayers) {
       // Room was created but no one ever joined - dispose it
-      logger.info({ roomId: this.roomId }, "Room was created but never had players, disposing immediately");
+      logger.info(
+        { roomId: this.roomId },
+        "Room was created but never had players, disposing immediately"
+      );
       this.disconnect();
     }
     // If the room has had initial players, keep it alive for potential reconnections
@@ -186,14 +218,22 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     logger.info({ roomId: this.roomId }, "Room disposed");
   }
 
-  protected handleMoveMessage(client: Client, data: unknown): void {
+  protected async handleMoveMessage(client: Client, data: unknown): Promise<void> {
     // Validate it's the player's turn
     if (this.state.status !== "in_progress") {
       client.send("error", { message: "Game is not in progress" });
       return;
     }
 
-    logger.info({ roomId: this.roomId, clientId: client.sessionId, currentTurnId: this.state.currentTurnId, status: this.state.status }, "Handling move");
+    logger.info(
+      {
+        roomId: this.roomId,
+        clientId: client.sessionId,
+        currentTurnId: this.state.currentTurnId,
+        status: this.state.status,
+      },
+      "Handling move"
+    );
 
     if (this.state.currentTurnId !== client.sessionId) {
       client.send("error", { message: "Not your turn" });
@@ -209,7 +249,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     // Check for win condition
     const result = this.checkWinCondition();
     if (result) {
-      this.endGame(result.winner, result.isDraw);
+      await this.endGame(result.winner, result.isDraw);
     }
   }
 
@@ -240,13 +280,20 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     if (this.clients.length < 2) return;
 
     const allReady = Array.from(this.state.players.values()).every((p) => p.isReady);
-    logger.info({
-      roomId: this.roomId,
-      clients: this.clients.length,
-      allReady,
-      initialPlayers: Array.from(this.initialPlayers),
-      players: Array.from(this.state.players.values()).map(p => ({ id: p.id, isReady: p.isReady, isBot: p.isBot }))
-    }, "Checking if game should start");
+    logger.info(
+      {
+        roomId: this.roomId,
+        clients: this.clients.length,
+        allReady,
+        initialPlayers: Array.from(this.initialPlayers),
+        players: Array.from(this.state.players.values()).map((p) => ({
+          id: p.id,
+          isReady: p.isReady,
+          isBot: p.isBot,
+        })),
+      },
+      "Checking if game should start"
+    );
 
     if (allReady) {
       // Lock in initial players and start game
@@ -258,20 +305,33 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     this.state.status = "in_progress";
     this.state.turnTimeLimit = config.game.turnTimeLimit;
 
+    // Update metadata to reflect game has started (for matchmaking)
+    this.setMetadata({
+      ...this.metadata,
+      status: "in_progress",
+    });
+
     // Randomly select first player from initial players only
     const initialPlayerIds = Array.from(this.initialPlayers);
     const firstPlayer = initialPlayerIds[Math.floor(Math.random() * initialPlayerIds.length)];
     this.state.currentTurnId = firstPlayer;
     this.state.turnStartedAt = Date.now();
 
-    logger.info({
-      roomId: this.roomId,
-      firstPlayer,
-      initialPlayers: initialPlayerIds,
-      allPlayers: Array.from(this.state.players.keys()),
-      currentTurnId: this.state.currentTurnId,
-      playerDetails: Array.from(this.state.players.values()).map(p => ({ id: p.id, sessionId: 'N/A', displayName: p.displayName }))
-    }, "Game started");
+    logger.info(
+      {
+        roomId: this.roomId,
+        firstPlayer,
+        initialPlayers: initialPlayerIds,
+        allPlayers: Array.from(this.state.players.keys()),
+        currentTurnId: this.state.currentTurnId,
+        playerDetails: Array.from(this.state.players.values()).map((p) => ({
+          id: p.id,
+          sessionId: "N/A",
+          displayName: p.displayName,
+        })),
+      },
+      "Game started"
+    );
 
     this.broadcast("game_started", { firstPlayer });
 
@@ -290,13 +350,16 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     this.state.currentTurnId = initialPlayerIds[nextIndex];
     this.state.turnStartedAt = Date.now();
 
-    logger.info({
-      roomId: this.roomId,
-      previousTurnId,
-      currentTurnId: this.state.currentTurnId,
-      initialPlayers: initialPlayerIds,
-      turnIndex: { current: currentIndex, next: nextIndex }
-    }, "Turn switched");
+    logger.info(
+      {
+        roomId: this.roomId,
+        previousTurnId,
+        currentTurnId: this.state.currentTurnId,
+        initialPlayers: initialPlayerIds,
+        turnIndex: { current: currentIndex, next: nextIndex },
+      },
+      "Turn switched"
+    );
 
     // Start turn timer for next player
     this.startTurnTimer();
@@ -322,51 +385,93 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     if (this.state.status !== "in_progress") return;
 
     const currentPlayerId = this.state.currentTurnId;
-    logger.info({ roomId: this.roomId, playerId: currentPlayerId }, "Turn timeout (display only, no forfeit)");
+    logger.info(
+      { roomId: this.roomId, playerId: currentPlayerId },
+      "Turn timeout (display only, no forfeit)"
+    );
   }
 
-  protected endGame(winnerId: string | null, isDraw: boolean): void {
+  protected async endGame(winnerId: string | null, isDraw: boolean): Promise<void> {
     this.clearTurnTimer();
     this.state.status = "finished";
     this.state.winnerId = winnerId || "";
     this.state.isDraw = isDraw;
 
-    logger.info({ roomId: this.roomId, winnerId, isDraw }, "Game ended");
+    // Update metadata to reflect game has finished (for matchmaking)
+    this.setMetadata({
+      ...this.metadata,
+      status: "finished",
+    });
+
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    logger.info("🏁 GAME ENDED");
+    logger.info(
+      {
+        roomId: this.roomId,
+        gameType: this.roomName,
+        winnerId,
+        isDraw,
+        vsBot: Boolean(this.metadata?.vsBot),
+        initialPlayers: Array.from(this.initialPlayers).length,
+      },
+      "Game result"
+    );
 
     this.broadcast("game_ended", { winnerId, isDraw });
 
     // Record history for all participants (including bots)
     try {
-      const participants: ParticipantIdentity[] = Array.from(this.initialPlayers).map((playerId) => {
-        const playerSchema = this.state.players.get(playerId);
-        const identity = this.playerIdentities.get(playerId);
-        return {
-          identity: identity?.identity || `guest:${playerId}`,
-          userId: identity?.userId,
-          browserSessionId: identity?.browserSessionId,
-          displayName: playerSchema?.displayName || identity?.displayName || "Player",
-          isBot: playerSchema?.isBot || identity?.isBot || false,
-        };
+      const participants: ParticipantIdentity[] = Array.from(this.initialPlayers).map(
+        (playerId) => {
+          const playerSchema = this.state.players.get(playerId);
+          const identity = this.playerIdentities.get(playerId);
+          return {
+            identity: identity?.identity || `guest:${playerId}`,
+            userId: identity?.userId,
+            browserSessionId: identity?.browserSessionId,
+            displayName: playerSchema?.displayName || identity?.displayName || "Player",
+            isBot: playerSchema?.isBot || identity?.isBot || false,
+          };
+        }
+      );
+
+      logger.info("📋 Participants:");
+      participants.forEach((p) => {
+        logger.info(`   ${p.isBot ? "🤖" : "👤"} ${p.displayName} (userId: ${p.userId || "N/A"})`);
       });
 
       const durationMs = this.metadata?.createdAt
         ? Date.now() - (this.metadata.createdAt as number)
         : undefined;
-      const winnerIdentity =
-        winnerId && this.playerIdentities.get(winnerId)
-          ? this.playerIdentities.get(winnerId)?.identity || winnerId
-          : winnerId;
 
-      const normalizedGameType = (this.roomName?.replace("_bot", "") as GameType) || GameType.CONNECT4;
+      // Get total moves if the game tracks it
+      const totalMoves = (this.state as any).moveCount || (this.state as any).roundNumber || null;
 
-      historyService.recordGame({
+      // Map winnerId (sessionId) to userId for database storage
+      let winnerUserId: string | null = null;
+      if (winnerId) {
+        const winnerIdentity = this.playerIdentities.get(winnerId);
+        winnerUserId = winnerIdentity?.userId || null;
+        logger.info(
+          `🏆 Winner: ${winnerIdentity?.displayName || "Unknown"} (userId: ${winnerUserId || "N/A"})`
+        );
+      }
+
+      const normalizedGameType =
+        (this.roomName?.replace("_bot", "") as GameType) || GameType.CONNECT4;
+
+      logger.info("💾 Calling historyService.recordGame...");
+
+      // recordGame is now async
+      await historyService.recordGame({
         roomId: this.roomId,
         gameType: normalizedGameType,
-        winnerId: winnerIdentity,
+        winnerId: winnerUserId,
         isDraw,
         participants,
         vsBot: Boolean(this.metadata?.vsBot),
         durationMs,
+        totalMoves,
       });
     } catch (error) {
       logger.error(error, "Failed to record game history");
@@ -378,10 +483,10 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     }, 10000);
   }
 
-  protected handlePlayerForfeit(forfeitPlayerId: string): void {
+  protected async handlePlayerForfeit(forfeitPlayerId: string): Promise<void> {
     // Only consider initial players for determining winner
     const initialPlayerIds = Array.from(this.initialPlayers);
     const winnerId = initialPlayerIds.find((id) => id !== forfeitPlayerId) || null;
-    this.endGame(winnerId, false);
+    await this.endGame(winnerId, false);
   }
 }

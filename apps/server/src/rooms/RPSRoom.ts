@@ -85,10 +85,7 @@ export class RPSRoom extends BaseRoom<RPSState> {
       this.state.player2Committed = true;
     }
 
-    logger.info(
-      { roomId: this.roomId, playerId: client.sessionId },
-      "Player committed choice"
-    );
+    logger.info({ roomId: this.roomId, playerId: client.sessionId }, "Player committed choice");
 
     // Notify that player has committed (but not what they chose)
     this.broadcast("player_committed", { playerId: client.sessionId });
@@ -101,7 +98,7 @@ export class RPSRoom extends BaseRoom<RPSState> {
   }
 
   // Override the base message handler to allow simultaneous moves
-  protected handleMoveMessage(client: Client, data: unknown): void {
+  protected override async handleMoveMessage(client: Client, data: unknown): Promise<void> {
     if (this.state.status !== "in_progress") {
       client.send("error", { message: "Game is not in progress" });
       return;
@@ -204,6 +201,7 @@ export class RPSRoom extends BaseRoom<RPSState> {
       this.state.player2Score++;
     }
 
+    const isDraw = !winner;
     logger.info(
       {
         roomId: this.roomId,
@@ -211,8 +209,14 @@ export class RPSRoom extends BaseRoom<RPSState> {
         player1Choice: this.state.player1Choice,
         player2Choice: this.state.player2Choice,
         winner,
+        isDraw,
+        player1Score: this.state.player1Score,
+        player2Score: this.state.player2Score,
+        willAdvanceRound: !!winner,
       },
-      "Round completed"
+      isDraw
+        ? "Round DRAW - will replay same round"
+        : "Round completed - will advance to next round"
     );
 
     this.broadcast("round_result", {
@@ -289,17 +293,15 @@ export class RPSRoom extends BaseRoom<RPSState> {
   }
 
   checkWinCondition(): { winner: string | null; isDraw: boolean } | null {
-    if (this.state.roundNumber >= 6) {
-      if (this.state.player1Score > this.state.player2Score) {
-        return { winner: this.state.player1Id, isDraw: false };
-      } else if (this.state.player2Score > this.state.player1Score) {
-        return { winner: this.state.player2Id, isDraw: false };
-      } else {
-        return { winner: null, isDraw: true };
-      }
+    // Check if either player has reached the target score (first to 3)
+    if (this.state.player1Score >= this.state.targetScore) {
+      return { winner: this.state.player1Id, isDraw: false };
+    }
+    if (this.state.player2Score >= this.state.targetScore) {
+      return { winner: this.state.player2Id, isDraw: false };
     }
 
-    // Prevent infinite games - fallback at round 20
+    // Prevent infinite games - fallback at round 20 (unlikely to reach with draws)
     if (this.state.roundNumber >= 20) {
       if (this.state.player1Score > this.state.player2Score) {
         return { winner: this.state.player1Id, isDraw: false };

@@ -17,6 +17,18 @@ export default function ProfilePage() {
     load();
   }, [load]);
 
+  // Debug logging
+  useEffect(() => {
+    console.log("🔍 Profile page - Current user state:", {
+      hasUser: !!user,
+      displayName: user?.displayName,
+      email: user?.email,
+      verified: user?.verified,
+      provider: user?.provider,
+      avatarUrl: user?.avatarUrl,
+    });
+  }, [user]);
+
   if (isLoading) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -39,7 +51,18 @@ export default function ProfilePage() {
   }
 
   const displayName = user?.displayName || user?.email || "Guest";
-  const isGuest = !user;
+  const isGuest = !user || !user.verified; // User is guest if not logged in or not verified
+
+  // DEBUG: Log the exact values
+  console.log("🔍 Profile Page Debug:", {
+    hasUser: !!user,
+    userObject: user,
+    displayName,
+    verified: user?.verified,
+    isGuest,
+    calculation: `!${!!user} || !${user?.verified} = ${isGuest}`,
+  });
+
   const initials = displayName
     .split(" ")
     .map((n) => n[0])
@@ -50,7 +73,7 @@ export default function ProfilePage() {
   return (
     <>
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
-      
+
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Profile Header */}
         <motion.div
@@ -60,8 +83,16 @@ export default function ProfilePage() {
         >
           <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
             {/* Avatar */}
-            <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-white text-3xl font-bold">
-              {initials}
+            <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-white text-3xl font-bold overflow-hidden">
+              {user?.avatarUrl ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={displayName}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span>{initials}</span>
+              )}
             </div>
 
             {/* Info */}
@@ -70,9 +101,7 @@ export default function ProfilePage() {
               <p className="text-surface-400 text-sm mt-1">
                 {isGuest ? "Guest Account" : "Registered Player"}
               </p>
-              {user?.email && (
-                <p className="text-surface-500 text-xs mt-1">{user.email}</p>
-              )}
+              {user?.email && <p className="text-surface-500 text-xs mt-1">{user.email}</p>}
               {user?.provider && (
                 <p className="text-surface-500 text-xs mt-1 capitalize">
                   Signed in via {user.provider === "password" ? "Email" : user.provider}
@@ -83,11 +112,7 @@ export default function ProfilePage() {
             {/* Actions */}
             {isGuest && (
               <div className="flex flex-col gap-2">
-                <Button 
-                  variant="primary" 
-                  size="sm"
-                  onClick={() => setIsAuthModalOpen(true)}
-                >
+                <Button variant="primary" size="sm" onClick={() => setIsAuthModalOpen(true)}>
                   Create Account
                 </Button>
                 <p className="text-xs text-surface-500 text-center">Keep your stats forever</p>
@@ -115,8 +140,18 @@ export default function ProfilePage() {
           >
             <div className="flex items-start gap-4">
               <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-primary-500/20 flex items-center justify-center">
-                <svg className="w-6 h-6 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <svg
+                  className="w-6 h-6 text-primary-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
                 </svg>
               </div>
               <div className="flex-1">
@@ -126,28 +161,55 @@ export default function ProfilePage() {
                 </p>
                 <ul className="space-y-2 text-sm text-surface-300 mb-4">
                   <li className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    <svg
+                      className="w-4 h-4 text-success"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
                     </svg>
                     Keep your game history across devices
                   </li>
                   <li className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    <svg
+                      className="w-4 h-4 text-success"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
                     </svg>
                     Track stats and achievements
                   </li>
                   <li className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    <svg
+                      className="w-4 h-4 text-success"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
                     </svg>
                     Compete on leaderboards
                   </li>
                 </ul>
-                <Button 
-                  variant="primary"
-                  onClick={() => setIsAuthModalOpen(true)}
-                >
+                <Button variant="primary" onClick={() => setIsAuthModalOpen(true)}>
                   Create Free Account
                 </Button>
               </div>
@@ -158,4 +220,3 @@ export default function ProfilePage() {
     </>
   );
 }
-

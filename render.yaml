@@ -1,0 +1,92 @@
+# Render Blueprint for Multiplayer Games Platform
+# This file can be used to deploy the entire stack to Render automatically
+# Learn more: https://render.com/docs/infrastructure-as-code
+
+services:
+  # Backend API and WebSocket Server
+  - type: web
+    name: multiplayer-games-backend
+    runtime: node
+    region: oregon # Choose: oregon, frankfurt, singapore, ohio
+    plan: free
+    rootDir: apps/server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: info
+      - key: LOG_PRETTY
+        value: false
+      # CORS_ORIGIN - Set to your frontend URL after deploying frontend
+      - key: CORS_ORIGIN
+        sync: false # Set manually in Render Dashboard
+      # BACKEND_URL - Set to this service's URL
+      - key: BACKEND_URL
+        sync: false # Set manually in Render Dashboard
+      # Authentication Secrets - Generate with: openssl rand -base64 32
+      - key: AUTH_SALT
+        generateValue: true # Render will auto-generate on first deploy
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      # Google OAuth - Get from Google Cloud Console
+      - key: GOOGLE_CLIENT_ID
+        sync: false # Set manually in Render Dashboard
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false # Set manually in Render Dashboard
+      # Database - Set to your Supabase connection string
+      - key: DATABASE_ENABLED
+        value: true
+      - key: DATABASE_URL
+        sync: false # Set manually in Render Dashboard
+      # Redis - Set to your Upstash connection string
+      - key: REDIS_ENABLED
+        value: true
+      - key: REDIS_URL
+        sync: false # Set manually in Render Dashboard
+      # Game Settings
+      - key: TURN_TIME_LIMIT
+        value: 30000
+      - key: MAX_PLAYERS_PER_ROOM
+        value: 4
+      - key: ROOM_DISPOSE_TIMEOUT
+        value: 60000
+      - key: RECONNECT_TIMEOUT
+        value: 60000
+
+  # Frontend Next.js Application
+  - type: web
+    name: multiplayer-games-frontend
+    runtime: static
+    region: oregon # Should match backend region
+    plan: free
+    rootDir: apps/web
+    buildCommand: npm install && npm run build
+    staticPublishPath: out # Or .next if using standalone output
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Backend URLs - Set after deploying backend
+      - key: NEXT_PUBLIC_API_URL
+        sync: false # Set manually to backend URL
+      - key: NEXT_PUBLIC_WS_URL
+        sync: false # Set manually to backend WebSocket URL (wss://)
+
+# Note: External services (Supabase, Upstash) must be set up separately
+# See RENDER_DEPLOYMENT.md for complete setup instructions

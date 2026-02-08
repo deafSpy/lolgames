@@ -47,9 +47,13 @@ export function UserMenu() {
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-600 text-white font-semibold hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 overflow-hidden transition-colors"
       >
-        {initials}
+        {user.avatarUrl ? (
+          <img src={user.avatarUrl} alt={displayName} className="h-full w-full object-cover" />
+        ) : (
+          <span>{initials}</span>
+        )}
       </button>
 
       {isOpen && (

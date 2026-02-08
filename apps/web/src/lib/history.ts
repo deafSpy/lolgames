@@ -16,6 +16,7 @@ export interface RemoteHistoryEntry {
 }
 
 export async function fetchHistory(token?: string | null): Promise<RemoteHistoryEntry[]> {
+  console.log("🔍 fetchHistory called with token:", token ? "present" : "null");
   const httpUrl = GAME_SERVER_URL.replace("ws://", "http://").replace("wss://", "https://");
   const params = new URLSearchParams();
   const browserSessionId = getBrowserSessionId();
@@ -23,7 +24,11 @@ export async function fetchHistory(token?: string | null): Promise<RemoteHistory
     params.set("browserSessionId", browserSessionId);
   }
 
-  const response = await fetch(`${httpUrl}/history?${params.toString()}`, {
+  const url = `${httpUrl}/history?${params.toString()}`;
+  console.log("🔍 fetchHistory URL:", url);
+  console.log("🔍 fetchHistory headers:", { hasToken: !!token, browserSessionId });
+
+  const response = await fetch(url, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       Accept: "application/json",
@@ -31,10 +36,13 @@ export async function fetchHistory(token?: string | null): Promise<RemoteHistory
     cache: "no-store",
   });
 
+  console.log("🔍 fetchHistory response status:", response.status);
+
   if (!response.ok) {
     throw new Error(`Failed to load history (${response.status})`);
   }
 
   const body = (await response.json()) as { games: RemoteHistoryEntry[] };
+  console.log("🔍 fetchHistory received games:", body.games?.length || 0);
   return body.games || [];
 }
