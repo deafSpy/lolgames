@@ -46,16 +46,36 @@ class RedisService {
     logger.info(`   TLS: ${usesTLS ? "Enabled (secure)" : "Disabled (local)"}`);
 
     try {
-      // Create main Redis client
+      // Create main Redis client with robust Upstash configuration
       this.client = new Redis(config.redis.url, {
-        maxRetriesPerRequest: 3,
-        enableReadyCheck: true,
+        // 1. Prevent "MaxRetriesPerRequestError" - retry forever for long-running servers
+        maxRetriesPerRequest: null,
+
+        // 2. Keep connection alive - ping every 10s to prevent Upstash from closing socket
+        keepAlive: 10000,
+
+        enableReadyCheck: false, // Disable for Upstash
+        connectTimeout: 20000,
+        lazyConnect: false,
+        family: 4, // Force IPv4
+
+        // 3. Aggressive retry strategy
         retryStrategy: (times) => {
           const delay = Math.min(times * 50, 2000);
           logger.warn(`   ⟳ Retry attempt ${times}, waiting ${delay}ms...`);
           return delay;
         },
-        // Fix for Upstash Redis SSL certificate issues
+
+        // 4. Auto-reconnect on specific errors
+        reconnectOnError: (err) => {
+          const targetError = "READONLY";
+          if (err.message.includes(targetError)) {
+            return true;
+          }
+          return false;
+        },
+
+        // Upstash TLS configuration
         tls: usesTLS
           ? {
               rejectUnauthorized: false,
@@ -63,11 +83,25 @@ class RedisService {
           : undefined,
       });
 
-      // Create separate subscriber client for pub/sub
+      // Create separate subscriber client for pub/sub with same robust config
       this.subscriber = new Redis(config.redis.url, {
-        maxRetriesPerRequest: 3,
-        enableReadyCheck: true,
-        // Fix for Upstash Redis SSL certificate issues
+        maxRetriesPerRequest: null,
+        keepAlive: 10000,
+        enableReadyCheck: false,
+        connectTimeout: 20000,
+        lazyConnect: false,
+        family: 4,
+        retryStrategy: (times) => {
+          const delay = Math.min(times * 50, 2000);
+          return delay;
+        },
+        reconnectOnError: (err) => {
+          const targetError = "READONLY";
+          if (err.message.includes(targetError)) {
+            return true;
+          }
+          return false;
+        },
         tls: usesTLS
           ? {
               rejectUnauthorized: false,
@@ -77,11 +111,34 @@ class RedisService {
 
       logger.info("⏳ Testing Redis connection...");
 
-      // Wait for connection
+      // Wait for connection - be patient with retries (30 seconds for Upstash)
       await new Promise((resolve, reject) => {
-        this.client!.on("ready", resolve);
-        this.client!.on("error", reject);
-        setTimeout(() => reject(new Error("Redis connection timeout (5s)")), 5000);
+        const timeout = setTimeout(() => {
+          this.client!.removeAllListeners("ready");
+          this.client!.removeAllListeners("error");
+          reject(new Error("Redis connection timeout (30s) - Upstash may be unreachable"));
+        }, 30000); // 30 seconds to allow multiple retries
+
+        this.client!.once("ready", () => {
+          clearTimeout(timeout);
+          this.client!.removeAllListeners("error");
+          logger.info("   ✓ Redis connection established successfully");
+          resolve(undefined);
+        });
+
+        // Don't reject on first error - let retry strategy handle it
+        // Only log errors, don't fail immediately
+        const errorCount = { count: 0 };
+        this.client!.on("error", (err) => {
+          errorCount.count++;
+          // Only reject if we get many errors in a row during initial connection
+          if (errorCount.count > 10) {
+            clearTimeout(timeout);
+            this.client!.removeAllListeners("ready");
+            this.client!.removeAllListeners("error");
+            reject(err);
+          }
+        });
       });
 
       this.isConnected = true;
@@ -333,6 +390,31 @@ class RedisService {
    */
   get connected(): boolean {
     return this.isConnected;
+  }
+
+  /**
+   * Get Redis client (for direct access)
+   * Use with caution - prefer service methods when possible
+   * Returns null if not connected (safe for optional features)
+   */
+  getClient(): Redis | null {
+    if (!this.client || !this.isConnected) {
+      return null;
+    }
+    return this.client;
+  }
+
+  /**
+   * Get the dedicated subscriber connection for pub/sub.
+   * A separate connection is required because once a client is in subscriber
+   * mode it can no longer issue regular commands.
+   * Returns null if Redis isn't connected.
+   */
+  getSubscriber(): Redis | null {
+    if (!this.subscriber || !this.isConnected) {
+      return null;
+    }
+    return this.subscriber;
   }
 }
 

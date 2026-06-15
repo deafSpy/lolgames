@@ -11,11 +11,14 @@ import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { database } from "./services/database.js";
 import { redisService } from "./services/redis.js";
+import { outboxFlusher } from "./services/outboxFlusher.js";
 import { runMigrations } from "./migrations/index.js";
 import { registerAuth } from "./auth.js";
 import { registerHistoryRoutes } from "./routes/history.js";
 import { registerLeaderboardRoutes } from "./routes/leaderboard.js";
 import { registerStatsRoutes } from "./routes/stats.js";
+import { registerRoomRoutes } from "./routes/rooms.js";
+import { registerLobbyStreamRoutes } from "./routes/lobby-stream.js";
 import { Connect4Room } from "./rooms/Connect4Room.js";
 import { RPSRoom } from "./rooms/RPSRoom.js";
 import { Connect4BotRoom } from "./rooms/Connect4BotRoom.js";
@@ -53,6 +56,11 @@ async function bootstrap() {
       logger.info("✅ MIGRATIONS COMPLETE");
       logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       logger.info("");
+
+      // DEA-37: start the outbox flusher right after migrations land so any
+      // rows left undelivered from a previous server lifetime are drained
+      // before we start accepting new games.
+      outboxFlusher.start();
     } catch (error) {
       logger.error(error, "❌ Database initialization failed");
       if (config.nodeEnv === "production") {
@@ -101,56 +109,62 @@ async function bootstrap() {
     allowedHeaders: ["Content-Type", "Accept", "Authorization"],
   });
 
-  // Health check endpoint (enhanced with database and Redis status)
+  // Health check endpoint (enhanced with database, Redis, and outbox status)
   app.get("/health", async () => {
-    const dbHealth = config.database.enabled
-      ? await database.healthCheck()
-      : { status: "disabled" };
-    const redisHealth = config.redis.enabled
-      ? await redisService.healthCheck()
-      : { status: "disabled" };
+    const dbOk = config.database.enabled ? await database.healthCheck() : true;
+    const redisOk = config.redis.enabled ? await redisService.healthCheck() : true;
+    const outboxHealth = await outboxFlusher.getHealth();
 
     return {
-      status: dbHealth ? "ok" : "degraded",
+      status: dbOk && redisOk ? "ok" : "degraded",
       timestamp: Date.now(),
       uptime: process.uptime(),
       services: {
         database: {
           enabled: config.database.enabled,
           connected: database.connected,
-          healthy: dbHealth,
+          healthy: dbOk,
         },
         redis: {
           enabled: config.redis.enabled,
           connected: redisService.connected,
-          healthy: redisHealth,
+          healthy: redisOk,
+        },
+        outbox: {
+          enabled: outboxHealth.enabled,
+          running: outboxHealth.running,
+          undelivered_count: outboxHealth.undeliveredCount,
+          oldest_undelivered_age_seconds: outboxHealth.oldestUndeliveredAgeSeconds,
+          last_flushed_at: outboxHealth.lastFlushedAt,
         },
       },
     };
   });
 
-  // Test endpoint to check environment variables
-  app.get("/test-env", async () => {
-    return {
-      cwd: process.cwd(),
-      env: {
-        JWT_SECRET: !!process.env.JWT_SECRET,
-        GOOGLE_CLIENT_ID: !!process.env.GOOGLE_CLIENT_ID,
-        GOOGLE_CLIENT_SECRET: !!process.env.GOOGLE_CLIENT_SECRET,
-        BACKEND_URL: process.env.BACKEND_URL,
-        NODE_ENV: process.env.NODE_ENV,
-        DATABASE_ENABLED: config.database.enabled,
-        REDIS_ENABLED: config.redis.enabled,
-      },
-    };
-  });
+  // Test endpoint — development only, gated out of production
+  if (config.nodeEnv !== "production") {
+    app.get("/test-env", async () => {
+      return {
+        cwd: process.cwd(),
+        env: {
+          JWT_SECRET: !!process.env.JWT_SECRET,
+          GOOGLE_CLIENT_ID: !!process.env.GOOGLE_CLIENT_ID,
+          GOOGLE_CLIENT_SECRET: !!process.env.GOOGLE_CLIENT_SECRET,
+          BACKEND_URL: process.env.BACKEND_URL,
+          NODE_ENV: process.env.NODE_ENV,
+          DATABASE_ENABLED: config.database.enabled,
+          REDIS_ENABLED: config.redis.enabled,
+        },
+      };
+    });
+  }
 
   // Auth routes (Express mounted inside Fastify)
   console.log("🔐 Registering auth routes...");
   await registerAuth(app);
   console.log("✅ Auth routes registered successfully");
 
-  // API routes
+  // API routes (excluding room routes which need gameServer)
   console.log("📊 Registering API routes...");
   await registerHistoryRoutes(app);
   await registerLeaderboardRoutes(app);
@@ -265,41 +279,96 @@ async function bootstrap() {
     transport: new WebSocketTransport({
       server: app.server,
     }),
-    devMode: true,
+    devMode: config.nodeEnv !== "production",
   });
 
-  // Define game rooms - show all rooms (waiting and in-progress)
-  gameServer.define("connect4", Connect4Room).enableRealtimeListing().filterBy(["status"]); // Allow filtering, show all statuses
-
-  gameServer.define("rps", RPSRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("quoridor", QuoridorRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("sequence", SequenceRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("splendor", SplendorRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("monopoly_deal", MonopolyDealRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("blackjack", BlackjackRoom).enableRealtimeListing().filterBy(["status"]);
-
-  // Bot rooms - also show in lobby for spectating
-  gameServer.define("connect4_bot", Connect4BotRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("rps_bot", RPSBotRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("quoridor_bot", QuoridorBotRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("sequence_bot", SequenceBotRoom).enableRealtimeListing().filterBy(["status"]);
-
-  gameServer.define("splendor_bot", SplendorBotRoom).enableRealtimeListing().filterBy(["status"]);
-
+  // Define game rooms - show all rooms (waiting and in-progress).
+  //
+  // The third arg `{ maxPlayers }` is Colyseus' per-room-type default options.
+  // It is merged with client-provided JoinOptions at create time with the
+  // server defaults winning (see MatchMaker.create → merge(clientOptions, handler.options)),
+  // so the lobby and the persisted matches row record the authoritative seat
+  // count per game type. Phase 2 multi-player variants will pass overrides
+  // through onCreate options for room-config-driven games.
   gameServer
-    .define("monopoly_deal_bot", MonopolyDealBotRoom)
+    .define("connect4", Connect4Room, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]); // Allow filtering, show all statuses
+
+  gameServer.define("rps", RPSRoom, { maxPlayers: 2 }).enableRealtimeListing().filterBy(["status"]);
+
+  // Quoridor: 2p today; the 4p variant arrives in Phase 2 via room config.
+  gameServer
+    .define("quoridor", QuoridorRoom, { maxPlayers: 2 })
     .enableRealtimeListing()
     .filterBy(["status"]);
 
-  gameServer.define("blackjack_bot", BlackjackBotRoom).enableRealtimeListing().filterBy(["status"]);
+  // Sequence supports 2/3/4 (teams). Upper bound so the slug-routed share URL
+  // can fill correctly.
+  gameServer
+    .define("sequence", SequenceRoom, { maxPlayers: 4 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  // Splendor: 2-4.
+  gameServer
+    .define("splendor", SplendorRoom, { maxPlayers: 4 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  // Monopoly Deal: 2-5.
+  gameServer
+    .define("monopoly_deal", MonopolyDealRoom, { maxPlayers: 5 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  // Blackjack: always 2 (player vs dealer table).
+  gameServer
+    .define("blackjack", BlackjackRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  // Bot rooms - 1v1 (human + bot), always 2 seats.
+  gameServer
+    .define("connect4_bot", Connect4BotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  gameServer
+    .define("rps_bot", RPSBotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  gameServer
+    .define("quoridor_bot", QuoridorBotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  gameServer
+    .define("sequence_bot", SequenceBotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  gameServer
+    .define("splendor_bot", SplendorBotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  gameServer
+    .define("monopoly_deal_bot", MonopolyDealBotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  gameServer
+    .define("blackjack_bot", BlackjackBotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  // Register room routes that need gameServer (after gameServer is initialized)
+  console.log("📋 Registering room slug routes...");
+  await registerRoomRoutes(app, gameServer);
+  await registerLobbyStreamRoutes(app);
+  console.log("✅ Room routes registered successfully");
 
   // Start Fastify server (HTTP only) - AFTER game server is fully initialized
   await app.listen({ port: config.port, host: config.host });
@@ -342,17 +411,20 @@ async function bootstrap() {
       logger.info("Shutting down game server...");
       await gameServer.gracefullyShutdown();
 
-      // Step 2: Close HTTP server
+      // Step 2: Stop the outbox flusher tick before tearing down the DB.
+      await outboxFlusher.stop();
+
+      // Step 3: Close HTTP server
       logger.info("Closing HTTP server...");
       await app.close();
 
-      // Step 3: Close database connections
+      // Step 4: Close database connections
       if (config.database.enabled && database.connected) {
         logger.info("Closing database connections...");
         await database.close();
       }
 
-      // Step 4: Close Redis connections
+      // Step 5: Close Redis connections
       if (config.redis.enabled && redisService.connected) {
         logger.info("Closing Redis connections...");
         await redisService.disconnect();

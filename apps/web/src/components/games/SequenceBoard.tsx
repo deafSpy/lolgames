@@ -60,14 +60,23 @@ const getSuitFromCard = (card: string): string => {
   return "";
 };
 
-// Check if a card is a jack and determine if it's one-eyed or two-eyed
-const getJackType = (card: { rank: string; suit: string }): "one-eyed" | "two-eyed" | null => {
+// Check if a card is a jack and determine if it's one-eyed or two-eyed.
+// One-eyed jacks: Jack of Hearts, Jack of Spades
+// Two-eyed jacks: Jack of Diamonds, Jack of Clubs
+// Overloaded so both the hand item shape ({rank, suit}) and the board layout
+// shape (raw cell strings like "J♥") can share the same helper.
+function getJackType(card: string): "one-eyed" | "two-eyed" | null;
+function getJackType(card: { rank: string; suit: string }): "one-eyed" | "two-eyed" | null;
+function getJackType(
+  card: string | { rank: string; suit: string }
+): "one-eyed" | "two-eyed" | null {
+  if (typeof card === "string") {
+    if (!card.startsWith("J")) return null;
+    return card.includes("♥") || card.includes("♠") ? "one-eyed" : "two-eyed";
+  }
   if (card.rank !== "J") return null;
-
-  // One-eyed jacks: Jack of Hearts, Jack of Spades
-  // Two-eyed jacks: Jack of Diamonds, Jack of Clubs
   return card.suit === "hearts" || card.suit === "spades" ? "one-eyed" : "two-eyed";
-};
+}
 
 export function SequenceBoard({
   chips,
@@ -100,9 +109,14 @@ export function SequenceBoard({
 
     // Convert card to board format (rank + suit)
     const cardRank = selectedCardData.rank;
-    const cardSuit = selectedCardData.suit === "hearts" ? "♥" :
-                     selectedCardData.suit === "diamonds" ? "♦" :
-                     selectedCardData.suit === "clubs" ? "♣" : "♠";
+    const cardSuit =
+      selectedCardData.suit === "hearts"
+        ? "♥"
+        : selectedCardData.suit === "diamonds"
+          ? "♦"
+          : selectedCardData.suit === "clubs"
+            ? "♣"
+            : "♠";
 
     const cardNotation = cardRank + cardSuit;
 
@@ -124,9 +138,7 @@ export function SequenceBoard({
           <div className="text-2xl font-bold text-primary-400">{team1Sequences}</div>
           <div className="text-xs text-surface-400">Team 1</div>
         </div>
-        <div className="text-surface-500">
-          First to {sequencesToWin}
-        </div>
+        <div className="text-surface-500">First to {sequencesToWin}</div>
         <div>
           <div className="text-2xl font-bold text-accent-400">{team2Sequences}</div>
           <div className="text-xs text-surface-400">Team 2</div>
@@ -139,9 +151,13 @@ export function SequenceBoard({
           <span className="text-surface-400">Game not started</span>
         ) : isMyTurn ? (
           selectedCard === null ? (
-            <span className="text-success font-medium">Your turn! Select a card from your hand.</span>
+            <span className="text-success font-medium">
+              Your turn! Select a card from your hand.
+            </span>
           ) : (
-            <span className="text-success font-medium">Card selected! Click on a highlighted square to play it.</span>
+            <span className="text-success font-medium">
+              Card selected! Click on a highlighted square to play it.
+            </span>
           )
         ) : (
           <span className="text-surface-400">Waiting for other player...</span>
@@ -175,14 +191,22 @@ export function SequenceBoard({
                   `}
                 >
                   <div className="flex flex-col items-center justify-center h-full">
-                    <span className={`font-bold ${selectedCard !== null ? "opacity-80" : "opacity-60"}`}>
+                    <span
+                      className={`font-bold ${selectedCard !== null ? "opacity-80" : "opacity-60"}`}
+                    >
                       {cell.replace(/[♥♦♣♠]/g, "")}
                     </span>
-                    <span className={`text-lg font-bold ${selectedCard !== null ? "opacity-80" : "opacity-60"}`} style={{ color: suitTextColor }}>
+                    <span
+                      className={`text-lg font-bold ${selectedCard !== null ? "opacity-80" : "opacity-60"}`}
+                      style={{ color: suitTextColor }}
+                    >
                       {suit}
                     </span>
                     {jackType && (
-                      <span className={`text-[8px] font-bold leading-none ${selectedCard !== null ? "opacity-80" : "opacity-60"}`} style={{ color: suitTextColor }}>
+                      <span
+                        className={`text-[8px] font-bold leading-none ${selectedCard !== null ? "opacity-80" : "opacity-60"}`}
+                        style={{ color: suitTextColor }}
+                      >
                         {jackType === "one-eyed" ? "1" : "2"}
                       </span>
                     )}
@@ -235,25 +259,41 @@ export function SequenceBoard({
                 `}
               >
                 <span>{card.rank}</span>
-              <span className="text-lg font-bold" style={{
-                color: card.suit === "hearts" ? SUIT_TEXT_COLORS["♥"] :
-                       card.suit === "diamonds" ? SUIT_TEXT_COLORS["♦"] :
-                       card.suit === "clubs" ? SUIT_TEXT_COLORS["♣"] : SUIT_TEXT_COLORS["♠"]
-              }}>
-                {card.suit === "hearts"
-                  ? "♥"
-                  : card.suit === "diamonds"
-                    ? "♦"
-                    : card.suit === "clubs"
-                      ? "♣"
-                      : "♠"}
-              </span>
+                <span
+                  className="text-lg font-bold"
+                  style={{
+                    color:
+                      card.suit === "hearts"
+                        ? SUIT_TEXT_COLORS["♥"]
+                        : card.suit === "diamonds"
+                          ? SUIT_TEXT_COLORS["♦"]
+                          : card.suit === "clubs"
+                            ? SUIT_TEXT_COLORS["♣"]
+                            : SUIT_TEXT_COLORS["♠"],
+                  }}
+                >
+                  {card.suit === "hearts"
+                    ? "♥"
+                    : card.suit === "diamonds"
+                      ? "♦"
+                      : card.suit === "clubs"
+                        ? "♣"
+                        : "♠"}
+                </span>
                 {jackType && (
-                  <span className="text-[10px] font-bold leading-none" style={{
-                    color: card.suit === "hearts" ? SUIT_TEXT_COLORS["♥"] :
-                           card.suit === "diamonds" ? SUIT_TEXT_COLORS["♦"] :
-                           card.suit === "clubs" ? SUIT_TEXT_COLORS["♣"] : SUIT_TEXT_COLORS["♠"]
-                  }}>
+                  <span
+                    className="text-[10px] font-bold leading-none"
+                    style={{
+                      color:
+                        card.suit === "hearts"
+                          ? SUIT_TEXT_COLORS["♥"]
+                          : card.suit === "diamonds"
+                            ? SUIT_TEXT_COLORS["♦"]
+                            : card.suit === "clubs"
+                              ? SUIT_TEXT_COLORS["♣"]
+                              : SUIT_TEXT_COLORS["♠"],
+                    }}
+                  >
                     {jackType === "one-eyed" ? "1" : "2"}
                   </span>
                 )}
@@ -274,5 +314,3 @@ export function SequenceBoard({
     </div>
   );
 }
-
-

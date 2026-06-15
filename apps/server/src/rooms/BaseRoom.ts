@@ -3,6 +3,8 @@ import { BaseGameState, GamePlayerSchema, GameType } from "@multiplayer/shared";
 import { logger } from "../logger.js";
 import { config } from "../config.js";
 import { historyService, type ParticipantIdentity } from "../services/historyService.js";
+import { lobbyService } from "../services/lobbyService.js";
+import { slugService } from "../services/slugService.js";
 
 export interface JoinOptions {
   playerName?: string;
@@ -12,6 +14,11 @@ export interface JoinOptions {
   browserSessionId?: string;
   userId?: string;
   authProvider?: string;
+  // Authoritative seat count for the room. Server-side: provided via the third
+  // arg to `gameServer.define(name, klass, { maxPlayers })` in index.ts, which
+  // overrides anything a client might send (Colyseus merges
+  // `clientOptions, handler.options`, handler wins).
+  maxPlayers?: number;
 }
 
 export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState> {
@@ -20,6 +27,9 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   turnTimer: Delayed | null = null;
   initialPlayers: Set<string> = new Set(); // Players that were in the lobby at game start
   protected playerIdentities: Map<string, ParticipantIdentity> = new Map();
+  protected roomSlug: string = ""; // Human-readable room code (e.g., "swift-blue-fox")
+  protected hostSessionId: string = ""; // Track the host for kick/bot management
+  protected maxPlayers: number = 2; // Authoritative seat count; set from onCreate options
 
   protected registerBotIdentity(botId: string, displayName: string): void {
     this.playerIdentities.set(botId, {
@@ -33,17 +43,46 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   abstract handleMove(client: Client, data: unknown): void;
   abstract checkWinCondition(): { winner: string | null; isDraw: boolean } | null;
 
-  onCreate(options: JoinOptions): void {
+  async onCreate(options: JoinOptions): Promise<void> {
     logger.info({ roomId: this.roomId, options }, "Room created");
+
+    const createdAt = options.createdAt || Date.now();
+    const vsBot = options.vsBot || false;
+    this.maxPlayers = options.maxPlayers ?? 2;
+
+    // Generate human-readable room slug
+    this.roomSlug = await slugService.generateUniqueSlug();
+    logger.info({ roomId: this.roomId, roomSlug: this.roomSlug }, "Generated room slug");
 
     // Set room metadata
     this.setMetadata({
       gameType: this.roomName,
       hostName: options.hostName || "Unknown",
-      createdAt: options.createdAt || Date.now(),
-      vsBot: options.vsBot || false,
+      createdAt,
+      vsBot,
       status: "waiting", // Add status for matchmaking
+      roomSlug: this.roomSlug, // Add slug to metadata for frontend access
     });
+
+    // Create lobby in Redis (non-blocking, skipped if Redis unavailable)
+    lobbyService
+      .createLobby({
+        roomId: this.roomId,
+        gameType: this.roomName as GameType,
+        host: options.hostName || "Unknown",
+        hostUserId: options.userId,
+        maxPlayers: this.maxPlayers,
+        vsBot,
+        metadata: {
+          roomSlug: this.roomSlug,
+        },
+      })
+      .catch((err) => {
+        logger.warn(
+          { error: err, roomId: this.roomId },
+          "Failed to create lobby in Redis (non-critical)"
+        );
+      });
 
     // Set up message handlers
     this.onMessage("move", (client, data) => {
@@ -65,6 +104,16 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         content: data.message,
         timestamp: Date.now(),
       });
+    });
+
+    // Host controls: Add bot
+    this.onMessage("add_bot", (client, data) => {
+      this.handleAddBot(client, data);
+    });
+
+    // Host controls: Kick player
+    this.onMessage("kick_player", (client, data) => {
+      this.handleKickPlayer(client, data);
     });
 
     // Initialize game-specific state
@@ -101,6 +150,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       player.isBot = false;
       player.isSpectator = this.state.status === "in_progress"; // Spectator if game already started
       player.wasInitialPlayer = !player.isSpectator; // Initial player if joining before game starts
+      player.isHost = false; // Will be set below if first player
 
       // Track a stable identity for history (userId > browserSessionId > sessionId)
       const identity: ParticipantIdentity = {
@@ -127,6 +177,13 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         "🔍 Player identity registered"
       );
 
+      // Track the first player as the host
+      if (this.initialPlayers.size === 0 && this.state.status === "waiting") {
+        this.hostSessionId = client.sessionId;
+        player.isHost = true;
+        logger.info({ roomId: this.roomId, hostSessionId: this.hostSessionId }, "Host assigned");
+      }
+
       // If game hasn't started yet, add to initial players
       if (this.state.status === "waiting") {
         this.initialPlayers.add(client.sessionId);
@@ -136,6 +193,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
             playerId: client.sessionId,
             initialPlayers: Array.from(this.initialPlayers),
             gameStatus: this.state.status,
+            isHost: player.isHost,
           },
           "Player added to initialPlayers"
         );
@@ -162,39 +220,160 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         },
         "Player joined"
       );
+
+      // Update lobby player count in Redis (if not spectator)
+      if (!player.isSpectator) {
+        lobbyService.playerJoined(this.roomId).catch((err) => {
+          logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
+        });
+      }
     }
 
     // Room now persists since someone joined it
   }
 
-  onLeave(client: Client, consented: boolean): void {
+  async onLeave(client: Client, consented: boolean): Promise<void> {
     const player = this.state.players.get(client.sessionId);
 
-    if (player) {
-      logger.info({ roomId: this.roomId, playerId: client.sessionId, consented }, "Player left");
-
-      if (consented || this.state.status === "finished") {
-        // Player intentionally left or game is over
-        this.state.players.delete(client.sessionId);
-
-        // If game was in progress and player left intentionally, forfeit
-        if (this.state.status === "in_progress" && consented) {
-          this.handlePlayerForfeit(client.sessionId);
-        }
-      } else {
-        // Player disconnected - mark as disconnected but keep their data
-        player.isConnected = false;
-        logger.info(
-          { roomId: this.roomId, playerId: client.sessionId },
-          "Player marked as disconnected"
-        );
-      }
+    if (!player) {
+      this.scheduleEmptyRoomDisposal();
+      return;
     }
 
-    // Schedule disposal if room becomes empty
-    this.scheduleEmptyRoomDisposal();
+    const identity = this.playerIdentities.get(client.sessionId);
+    logger.info(
+      {
+        roomId: this.roomId,
+        playerId: client.sessionId,
+        consented,
+        gameStatus: this.state.status,
+      },
+      "Player left"
+    );
 
-    // Rooms are never locked - spectators can always join
+    // Consented leave or game already over → remove immediately.
+    if (consented || this.state.status === "finished") {
+      this.state.players.delete(client.sessionId);
+
+      if (this.state.status === "in_progress" && consented) {
+        this.handlePlayerForfeit(client.sessionId);
+      }
+
+      if (!player.isSpectator && this.state.status === "waiting") {
+        lobbyService.playerLeft(this.roomId).catch((err) => {
+          logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
+        });
+      }
+
+      this.scheduleEmptyRoomDisposal();
+      return;
+    }
+
+    // Spectators or pre-game disconnects: just drop the player; don't hold the seat.
+    if (player.isSpectator || this.state.status !== "in_progress") {
+      this.state.players.delete(client.sessionId);
+      if (!player.isSpectator && this.state.status === "waiting") {
+        lobbyService.playerLeft(this.roomId).catch((err) => {
+          logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
+        });
+      }
+      this.scheduleEmptyRoomDisposal();
+      return;
+    }
+
+    // In-progress, non-consented drop for an initial player: hold the seat
+    // open for RECONNECT_TIMEOUT seconds so the client can resume the same
+    // sessionId via client.reconnect(reconnectionToken).
+    player.isConnected = false;
+    const reconnectSeconds = Math.max(1, Math.floor(config.game.reconnectTimeout / 1000));
+    logger.info(
+      {
+        roomId: this.roomId,
+        sessionId: client.sessionId,
+        displayName: player.displayName,
+        identity: identity?.identity,
+        userId: identity?.userId,
+        reconnectWindowSec: reconnectSeconds,
+      },
+      "Reconnect window opened"
+    );
+
+    historyService
+      .recordMatchEvent({
+        roomId: this.roomId,
+        roomSlug: this.roomSlug,
+        gameType: (this.roomName?.replace("_bot", "") as GameType) || GameType.CONNECT4,
+        eventType: "disconnect",
+        sessionId: client.sessionId,
+        identity: identity,
+        metadata: { reconnectWindowSec: reconnectSeconds },
+      })
+      .catch((err) => {
+        logger.warn({ err, roomId: this.roomId }, "Failed to record disconnect event");
+      });
+
+    try {
+      await this.allowReconnection(client, reconnectSeconds);
+      // onJoin() runs again with the same sessionId; isConnected is flipped
+      // back to true there. Just log + emit the reconnect event here.
+      logger.info(
+        {
+          roomId: this.roomId,
+          sessionId: client.sessionId,
+          displayName: player.displayName,
+          identity: identity?.identity,
+        },
+        "Reconnect succeeded"
+      );
+
+      historyService
+        .recordMatchEvent({
+          roomId: this.roomId,
+          roomSlug: this.roomSlug,
+          gameType: (this.roomName?.replace("_bot", "") as GameType) || GameType.CONNECT4,
+          eventType: "reconnect",
+          sessionId: client.sessionId,
+          identity: identity,
+        })
+        .catch((err) => {
+          logger.warn({ err, roomId: this.roomId }, "Failed to record reconnect event");
+        });
+    } catch {
+      // Window expired (or the player consented during it) → forfeit so the
+      // game doesn't hang. Connect 4 policy: opponent wins on expiry.
+      logger.info(
+        {
+          roomId: this.roomId,
+          sessionId: client.sessionId,
+          displayName: player.displayName,
+          identity: identity?.identity,
+          reconnectWindowSec: reconnectSeconds,
+        },
+        "Reconnect window expired, forfeiting"
+      );
+
+      historyService
+        .recordMatchEvent({
+          roomId: this.roomId,
+          roomSlug: this.roomSlug,
+          gameType: (this.roomName?.replace("_bot", "") as GameType) || GameType.CONNECT4,
+          eventType: "reconnect_expired",
+          sessionId: client.sessionId,
+          identity: identity,
+          metadata: { reconnectWindowSec: reconnectSeconds },
+        })
+        .catch((err) => {
+          logger.warn({ err, roomId: this.roomId }, "Failed to record reconnect_expired event");
+        });
+
+      if (this.state.status === "in_progress") {
+        this.state.players.delete(client.sessionId);
+        await this.handlePlayerForfeit(client.sessionId);
+      } else {
+        this.state.players.delete(client.sessionId);
+      }
+      this.scheduleEmptyRoomDisposal();
+    }
   }
 
   protected scheduleEmptyRoomDisposal(): void {
@@ -311,6 +490,11 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       status: "in_progress",
     });
 
+    // Mark game as started in Redis (handoff point - lobby stays for spectators)
+    lobbyService.startGame(this.roomId).catch((err) => {
+      logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby status in Redis");
+    });
+
     // Randomly select first player from initial players only
     const initialPlayerIds = Array.from(this.initialPlayers);
     const firstPlayer = initialPlayerIds[Math.floor(Math.random() * initialPlayerIds.length)];
@@ -344,6 +528,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
 
     // Only cycle through initial players
     const initialPlayerIds = Array.from(this.initialPlayers);
+    if (initialPlayerIds.length === 0) return;
     const currentIndex = initialPlayerIds.indexOf(this.state.currentTurnId);
     const nextIndex = (currentIndex + 1) % initialPlayerIds.length;
     const previousTurnId = this.state.currentTurnId;
@@ -401,6 +586,11 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     this.setMetadata({
       ...this.metadata,
       status: "finished",
+    });
+
+    // Delete lobby from Redis (game is over, no more spectators needed)
+    lobbyService.deleteLobby(this.roomId).catch((err) => {
+      logger.warn({ error: err, roomId: this.roomId }, "Failed to delete lobby from Redis");
     });
 
     logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -465,6 +655,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       // recordGame is now async
       await historyService.recordGame({
         roomId: this.roomId,
+        roomSlug: this.roomSlug,
         gameType: normalizedGameType,
         winnerId: winnerUserId,
         isDraw,
@@ -472,6 +663,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         vsBot: Boolean(this.metadata?.vsBot),
         durationMs,
         totalMoves,
+        maxPlayers: this.maxPlayers,
       });
     } catch (error) {
       logger.error(error, "Failed to record game history");
@@ -488,5 +680,178 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     const initialPlayerIds = Array.from(this.initialPlayers);
     const winnerId = initialPlayerIds.find((id) => id !== forfeitPlayerId) || null;
     await this.endGame(winnerId, false);
+  }
+
+  /**
+   * Host Control: Add a bot to the lobby
+   * Only works before game starts
+   */
+  protected handleAddBot(client: Client, data: { difficulty?: string; name?: string }): void {
+    // Verify caller is host
+    if (client.sessionId !== this.hostSessionId) {
+      client.send("error", { message: "Only the host can add bots" });
+      logger.warn({ roomId: this.roomId, clientId: client.sessionId }, "Non-host tried to add bot");
+      return;
+    }
+
+    // Only allow adding bots before game starts
+    if (this.state.status !== "waiting") {
+      client.send("error", { message: "Cannot add bots after game starts" });
+      return;
+    }
+
+    // Generate bot ID and name
+    const botId = `bot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const botName = data.name || `Bot ${this.state.players.size + 1}`;
+    const difficulty = data.difficulty || "Medium";
+
+    // Create bot player
+    const bot = new GamePlayerSchema();
+    bot.id = botId;
+    bot.displayName = botName;
+    bot.isBot = true;
+    bot.isReady = true; // Bots are always ready
+    bot.isConnected = true;
+    bot.joinedAt = Date.now();
+    bot.isSpectator = false;
+    bot.wasInitialPlayer = true;
+    bot.isHost = false;
+
+    // Add to players and initial players
+    this.state.players.set(botId, bot);
+    this.initialPlayers.add(botId);
+
+    // Register bot identity
+    this.registerBotIdentity(botId, botName);
+
+    logger.info(
+      {
+        roomId: this.roomId,
+        botId,
+        botName,
+        difficulty,
+        totalPlayers: this.state.players.size,
+      },
+      "Bot added to lobby"
+    );
+
+    // Broadcast to all clients
+    this.broadcast("bot_added", {
+      botId,
+      botName,
+      difficulty,
+    });
+
+    // Update lobby in Redis
+    lobbyService.playerJoined(this.roomId).catch((err) => {
+      logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby after bot add");
+    });
+  }
+
+  /**
+   * Host Control: Kick a player from the lobby
+   * Only works before game starts
+   */
+  protected handleKickPlayer(client: Client, data: { playerId: string }): void {
+    // Verify caller is host
+    if (client.sessionId !== this.hostSessionId) {
+      client.send("error", { message: "Only the host can kick players" });
+      logger.warn(
+        { roomId: this.roomId, clientId: client.sessionId },
+        "Non-host tried to kick player"
+      );
+      return;
+    }
+
+    // Only allow kicking before game starts
+    if (this.state.status !== "waiting") {
+      client.send("error", { message: "Cannot kick players after game starts" });
+      return;
+    }
+
+    const { playerId } = data;
+
+    // Cannot kick yourself (the host)
+    if (playerId === this.hostSessionId) {
+      client.send("error", { message: "Cannot kick yourself" });
+      return;
+    }
+
+    const player = this.state.players.get(playerId);
+    if (!player) {
+      client.send("error", { message: "Player not found" });
+      return;
+    }
+
+    // Handle bot kick (just remove from state)
+    if (player.isBot) {
+      this.state.players.delete(playerId);
+      this.initialPlayers.delete(playerId);
+      this.playerIdentities.delete(playerId);
+
+      logger.info(
+        {
+          roomId: this.roomId,
+          kickedPlayerId: playerId,
+          playerName: player.displayName,
+          isBot: true,
+        },
+        "Bot kicked from lobby"
+      );
+
+      this.broadcast("player_kicked", {
+        playerId,
+        playerName: player.displayName,
+        isBot: true,
+      });
+
+      // Update lobby in Redis
+      lobbyService.playerLeft(this.roomId).catch((err) => {
+        logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby after bot kick");
+      });
+
+      return;
+    }
+
+    // Handle human player kick (disconnect their socket)
+    const targetClient = Array.from(this.clients).find((c) => c.sessionId === playerId);
+    if (targetClient) {
+      logger.info(
+        {
+          roomId: this.roomId,
+          kickedPlayerId: playerId,
+          playerName: player.displayName,
+          isBot: false,
+        },
+        "Player kicked from lobby"
+      );
+
+      // Notify the kicked player
+      targetClient.send("kicked", {
+        reason: "You were removed from the lobby by the host",
+      });
+
+      // Broadcast to others
+      this.broadcast(
+        "player_kicked",
+        {
+          playerId,
+          playerName: player.displayName,
+          isBot: false,
+        },
+        { except: targetClient }
+      );
+
+      // Disconnect the client
+      targetClient.leave(1000); // Normal closure
+
+      // Update lobby in Redis
+      lobbyService.playerLeft(this.roomId).catch((err) => {
+        logger.warn(
+          { error: err, roomId: this.roomId },
+          "Failed to update lobby after player kick"
+        );
+      });
+    }
   }
 }

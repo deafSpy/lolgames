@@ -439,6 +439,46 @@ class UserService {
       throw error;
     }
   }
+
+  /**
+   * Merge guest account data into authenticated user account
+   * This is called when a guest converts to a registered user
+   *
+   * @param guestId - The guest user's UUID
+   * @param userId - The authenticated user's UUID
+   */
+  async mergeGuestToUser(guestId: string, userId: string): Promise<void> {
+    try {
+      logger.info({ guestId, userId }, "🔄 Merging guest account into authenticated user");
+
+      // Call the PostgreSQL function to merge guest data
+      await database.query("SELECT merge_guest_to_user($1, $2)", [guestId, userId]);
+
+      logger.info({ guestId, userId }, "✅ Successfully merged guest account");
+    } catch (error) {
+      logger.error({ error, guestId, userId }, "❌ Failed to merge guest account");
+      // Don't throw - we don't want to block registration/sign-in if merge fails
+    }
+  }
+
+  /**
+   * Find guest account by browser session ID
+   * Used for merging when a user signs in/up after playing as guest
+   *
+   * @param browserSessionId - The browser session ID
+   */
+  async getGuestByBrowserSessionId(browserSessionId: string): Promise<User | null> {
+    try {
+      const rows = await database.query<User>(
+        `SELECT * FROM users WHERE browser_session_id = $1 AND is_anonymous = true LIMIT 1`,
+        [browserSessionId]
+      );
+      return rows.length > 0 ? rows[0] : null;
+    } catch (error) {
+      logger.error({ error, browserSessionId }, "Failed to get guest by browser session ID");
+      return null;
+    }
+  }
 }
 
 export const userService = new UserService();

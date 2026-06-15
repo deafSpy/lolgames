@@ -1,9 +1,7 @@
 import { Client } from "@colyseus/core";
-import {
-  BlackjackState,
-  BlackjackPlayerSchema,
-} from "@multiplayer/shared";
+import { BlackjackState, BlackjackPlayerSchema } from "@multiplayer/shared";
 import { BlackjackRoom } from "./BlackjackRoom.js";
+import type { JoinOptions } from "./BaseRoom.js";
 import { BlackjackBot } from "../bots/BlackjackBot.js";
 import { logger } from "../logger.js";
 
@@ -15,8 +13,8 @@ export class BlackjackBotRoom extends BlackjackRoom {
   private bots: Map<string, BlackjackBot> = new Map();
   private botCount = 2; // Default 2 bots for 3-player tournament
 
-  onCreate(options: { playerName?: string; hostName?: string; createdAt?: number; vsBot?: boolean; botCount?: number }): void {
-    super.onCreate(options);
+  async onCreate(options: JoinOptions & { botCount?: number }): Promise<void> {
+    await super.onCreate(options);
     this.botCount = Math.min(options.botCount || 2, 3);
     logger.info({ roomId: this.roomId, botCount: this.botCount }, "Blackjack bot room created");
   }
@@ -32,7 +30,7 @@ export class BlackjackBotRoom extends BlackjackRoom {
 
   private addBot(index: number): void {
     const botId = `blackjack_bot_${index}`;
-    
+
     if (this.state.players.has(botId)) return;
 
     const bot = new BlackjackPlayerSchema();
@@ -60,10 +58,10 @@ export class BlackjackBotRoom extends BlackjackRoom {
 
   protected checkStartGame(): void {
     if (this.state.status !== "waiting") return;
-    
+
     // Only need human player to be ready
     const humanPlayer = Array.from(this.state.players.values()).find(
-      p => !p.id.startsWith("blackjack_bot_")
+      (p) => !p.id.startsWith("blackjack_bot_")
     );
 
     if (humanPlayer?.isReady) {
@@ -73,14 +71,14 @@ export class BlackjackBotRoom extends BlackjackRoom {
 
   protected startGame(): void {
     super.startGame();
-    
+
     // Check if bot needs to act
     this.scheduleBotAction();
   }
 
   handleMove(client: Client, data: unknown): void {
     super.handleMove(client, data);
-    
+
     // After human move, check if bot needs to act
     this.scheduleBotAction();
   }
@@ -88,7 +86,10 @@ export class BlackjackBotRoom extends BlackjackRoom {
   private scheduleBotAction(): void {
     if (this.state.status !== "in_progress") return;
 
-    logger.info({ roomId: this.roomId, phase: this.state.phase, currentTurnId: this.state.currentTurnId }, "Scheduling bot action");
+    logger.info(
+      { roomId: this.roomId, phase: this.state.phase, currentTurnId: this.state.currentTurnId },
+      "Scheduling bot action"
+    );
 
     // Handle betting phase - use currentTurnId for betting order
     if (this.state.phase === "betting") {
@@ -97,7 +98,10 @@ export class BlackjackBotRoom extends BlackjackRoom {
         logger.info({ roomId: this.roomId, botId: currentBettor }, "Scheduling bot bet");
         this.scheduleBotBet(currentBettor);
       } else {
-        logger.info({ roomId: this.roomId, currentBettor }, "Not bot's turn to bet or no current bettor");
+        logger.info(
+          { roomId: this.roomId, currentBettor },
+          "Not bot's turn to bet or no current bettor"
+        );
       }
       return;
     }
@@ -109,12 +113,18 @@ export class BlackjackBotRoom extends BlackjackRoom {
         logger.info({ roomId: this.roomId, botId: currentPlayer }, "Scheduling bot play");
         this.scheduleBotPlay(currentPlayer);
       } else {
-        logger.info({ roomId: this.roomId, currentPlayer }, "Not bot's turn to play or no current player");
+        logger.info(
+          { roomId: this.roomId, currentPlayer },
+          "Not bot's turn to play or no current player"
+        );
       }
       return;
     }
 
-    logger.info({ roomId: this.roomId, phase: this.state.phase }, "No bot action needed for current phase");
+    logger.info(
+      { roomId: this.roomId, phase: this.state.phase },
+      "No bot action needed for current phase"
+    );
   }
 
   private scheduleBotBet(botId: string): void {
@@ -122,7 +132,7 @@ export class BlackjackBotRoom extends BlackjackRoom {
     if (!bot) return;
 
     const delay = 400 + Math.random() * 300;
-    
+
     this.clock.setTimeout(async () => {
       if (this.state.phase !== "betting") return;
       if (this.state.currentTurnId !== botId) return;
@@ -130,13 +140,20 @@ export class BlackjackBotRoom extends BlackjackRoom {
       try {
         logger.info({ roomId: this.roomId, botId }, "Bot calculating bet move");
         const gameState = this.buildGameStateForBot();
-        const move = await bot.getMove(gameState) as { action: string; amount: number; isSecret: boolean };
+        const move = (await bot.getMove(gameState)) as {
+          action: string;
+          amount: number;
+          isSecret: boolean;
+        };
         logger.info({ roomId: this.roomId, botId, move }, "Bot calculated bet move");
 
         this.executeBotBet(botId, move);
         this.scheduleBotAction();
       } catch (error) {
-        logger.error({ error: error instanceof Error ? error.message : String(error), botId }, "Bot bet failed");
+        logger.error(
+          { error: error instanceof Error ? error.message : String(error), botId },
+          "Bot bet failed"
+        );
         // Place minimum bet on error
         this.executeBotBet(botId, { action: "bet", amount: this.state.minBet, isSecret: false });
         this.scheduleBotAction();
@@ -149,7 +166,7 @@ export class BlackjackBotRoom extends BlackjackRoom {
     if (!bot) return;
 
     const delay = 500 + Math.random() * 400;
-    
+
     this.clock.setTimeout(async () => {
       if (this.state.phase !== "player_turn") return;
       if (this.state.currentTurnId !== botId) return;
@@ -157,13 +174,16 @@ export class BlackjackBotRoom extends BlackjackRoom {
       try {
         logger.info({ roomId: this.roomId, botId }, "Bot calculating play move");
         const gameState = this.buildGameStateForBot();
-        const move = await bot.getMove(gameState) as { action: string };
+        const move = (await bot.getMove(gameState)) as { action: string };
         logger.info({ roomId: this.roomId, botId, move }, "Bot calculated play move");
 
         this.executeBotPlay(botId, move);
         this.scheduleBotAction();
       } catch (error) {
-        logger.error({ error: error instanceof Error ? error.message : String(error), botId }, "Bot play failed");
+        logger.error(
+          { error: error instanceof Error ? error.message : String(error), botId },
+          "Bot play failed"
+        );
         // Stand on error
         this.executeBotPlay(botId, { action: "stand" });
         this.scheduleBotAction();
@@ -173,16 +193,16 @@ export class BlackjackBotRoom extends BlackjackRoom {
 
   private buildGameStateForBot(): unknown {
     const players = new Map<string, unknown>();
-    
+
     for (const [id, player] of this.state.players) {
       const p = player as BlackjackPlayerSchema;
       const currentBet = p.hands.length > 0 ? p.hands[0].bet : 0;
       players.set(id, {
         id: p.id,
         chips: p.chips,
-        hands: Array.from(p.hands).map(h => ({
+        hands: Array.from(p.hands).map((h) => ({
           id: `hand_${id}`,
-          cards: Array.from(h.cards).map(c => ({
+          cards: Array.from(h.cards).map((c) => ({
             suit: c.suit,
             rank: c.rank,
             value: this.getCardValue(c.rank),
@@ -212,7 +232,7 @@ export class BlackjackBotRoom extends BlackjackRoom {
       phase: this.state.phase,
       currentTurnId: this.state.currentTurnId,
       players,
-      dealerHand: Array.from(this.state.dealerHand).map(c => ({
+      dealerHand: Array.from(this.state.dealerHand).map((c) => ({
         suit: c.suit,
         rank: c.rank,
         value: this.getCardValue(c.rank),
@@ -234,7 +254,10 @@ export class BlackjackBotRoom extends BlackjackRoom {
     return parseInt(rank) || 0;
   }
 
-  private executeBotBet(botId: string, move: { action: string; amount: number; isSecret: boolean }): void {
+  private executeBotBet(
+    botId: string,
+    move: { action: string; amount: number; isSecret: boolean }
+  ): void {
     logger.info({ roomId: this.roomId, botId, move }, "Executing bot bet");
 
     const player = this.state.players.get(botId) as BlackjackPlayerSchema;
@@ -257,7 +280,7 @@ export class BlackjackBotRoom extends BlackjackRoom {
     logger.info({ roomId: this.roomId, botId, betAmount }, "Bot placing bet");
 
     // Use parent's bet handling
-    (this as BlackjackRoom).handleMove(fakeClient, {
+    this.handleMove(fakeClient, {
       action: "place_bet",
       amount: betAmount,
       isSecret: move.isSecret || false,
@@ -287,6 +310,6 @@ export class BlackjackBotRoom extends BlackjackRoom {
     logger.info({ roomId: this.roomId, botId, roomAction }, "Bot executing action");
 
     // Execute the action
-    (this as BlackjackRoom).handleMove(fakeClient, { action: roomAction });
+    this.handleMove(fakeClient, { action: roomAction });
   }
 }

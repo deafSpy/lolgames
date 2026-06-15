@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/Button";
 import { GameHistory } from "@/components/profile/GameHistory";
+import { PlayerStats } from "@/components/profile/PlayerStats";
 import { AuthModal } from "@/components/auth/AuthModal";
 
 export default function ProfilePage() {
@@ -121,11 +122,15 @@ export default function ProfilePage() {
           </div>
         </motion.div>
 
+        {/* Player Stats */}
+        <PlayerStats />
+
         {/* Game History */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
+          transition={{ delay: 0.2 }}
+          className="mt-6"
         >
           <GameHistory />
         </motion.div>

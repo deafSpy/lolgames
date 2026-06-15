@@ -27,12 +27,12 @@ function determineRoundWinner(
 function checkGameWinner(
   player1Score: number,
   player2Score: number,
-  targetScore: number,
+  bestOf: number,
   roundNumber: number,
   player1Id: string,
   player2Id: string
 ): { winner: string | null; isDraw: boolean } | null {
-  const winsNeeded = targetScore;
+  const winsNeeded = Math.ceil(bestOf / 2);
 
   if (player1Score >= winsNeeded) {
     return { winner: player1Id, isDraw: false };
@@ -41,12 +41,9 @@ function checkGameWinner(
     return { winner: player2Id, isDraw: false };
   }
 
-  const roundsRemaining = 2 * targetScore - roundNumber;
+  const roundsRemaining = bestOf - roundNumber;
 
-  if (
-    player1Score + roundsRemaining < winsNeeded &&
-    player2Score + roundsRemaining < winsNeeded
-  ) {
+  if (player1Score + roundsRemaining < winsNeeded && player2Score + roundsRemaining < winsNeeded) {
     return { winner: null, isDraw: true };
   }
 
@@ -123,4 +120,3 @@ describe("RPS Game Logic", () => {
     });
   });
 });
-

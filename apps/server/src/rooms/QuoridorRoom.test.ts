@@ -137,12 +137,15 @@ describe("Quoridor Pathfinding", () => {
     });
 
     it("should detect blocked path", () => {
-      // Create a wall across the entire board at row 4
+      // Create a wall across the entire 9-column board at row 4.
+      // Each horizontal wall covers 2 columns. Walls at x=0,2,4,6 cover columns 0-7.
+      // An additional wall at x=7 covers columns 7-8, completing the blockade.
       const walls: Wall[] = [
         { x: 0, y: 4, orientation: "horizontal" },
         { x: 2, y: 4, orientation: "horizontal" },
         { x: 4, y: 4, orientation: "horizontal" },
         { x: 6, y: 4, orientation: "horizontal" },
+        { x: 7, y: 4, orientation: "horizontal" },
       ];
       expect(hasPathToGoal(4, 8, 0, walls)).toBe(false);
     });
@@ -156,7 +159,7 @@ describe("Quoridor Pathfinding", () => {
   describe("isWallBlocking", () => {
     it("should detect horizontal wall blocking vertical movement", () => {
       const walls: Wall[] = [{ x: 3, y: 4, orientation: "horizontal" }];
-      
+
       // Moving from (4, 4) to (4, 5) should be blocked
       expect(isWallBlocking(4, 4, 4, 5, walls)).toBe(true);
       // Moving from (3, 4) to (3, 5) should be blocked
@@ -167,7 +170,7 @@ describe("Quoridor Pathfinding", () => {
 
     it("should detect vertical wall blocking horizontal movement", () => {
       const walls: Wall[] = [{ x: 4, y: 3, orientation: "vertical" }];
-      
+
       // Moving from (4, 4) to (5, 4) should be blocked
       expect(isWallBlocking(4, 4, 5, 4, walls)).toBe(true);
       // Moving from (4, 3) to (5, 3) should be blocked
@@ -178,7 +181,7 @@ describe("Quoridor Pathfinding", () => {
 
     it("should not block movement parallel to wall", () => {
       const walls: Wall[] = [{ x: 4, y: 4, orientation: "horizontal" }];
-      
+
       // Horizontal movement should not be blocked by horizontal wall
       expect(isWallBlocking(4, 4, 5, 4, walls)).toBe(false);
       expect(isWallBlocking(4, 5, 5, 5, walls)).toBe(false);

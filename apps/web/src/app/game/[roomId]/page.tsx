@@ -323,7 +323,22 @@ export default function GameRoomPage() {
           s.walls as unknown as ArrayLike<{ x: number; y: number; orientation: string }>
         );
       }
-    } else if (roomName === "catan") {
+    } else if (normalized === GameType.SEQUENCE) {
+      if (s.chips) {
+        plainState.chips = Array.from(
+          s.chips as unknown as ArrayLike<{
+            x: number;
+            y: number;
+            teamId: number;
+            isPartOfSequence: boolean;
+          }>
+        );
+      }
+      plainState.team1Sequences = s.team1Sequences;
+      plainState.team2Sequences = s.team2Sequences;
+      plainState.sequencesToWin = s.sequencesToWin;
+      plainState.deckRemaining = s.deckRemaining;
+    } else if (normalized === GameType.CATAN) {
       if (s.tiles) {
         plainState.tiles = Array.from(
           s.tiles as unknown as ArrayLike<{
@@ -343,7 +358,7 @@ export default function GameRoomPage() {
       }
       plainState.lastDiceRoll = s.lastDiceRoll;
       plainState.setupRound = s.setupRound;
-    } else if (roomName === "splendor") {
+    } else if (normalized === GameType.SPLENDOR) {
       plainState.bankWhite = s.bankWhite;
       plainState.bankBlue = s.bankBlue;
       plainState.bankGreen = s.bankGreen;
@@ -366,7 +381,7 @@ export default function GameRoomPage() {
       plainState.tier2Remaining = s.tier2Remaining;
       plainState.tier3Remaining = s.tier3Remaining;
       plainState.pointsToWin = s.pointsToWin;
-    } else if (roomName === "monopoly_deal") {
+    } else if (normalized === GameType.MONOPOLY_DEAL) {
       plainState.deckRemaining = s.deckRemaining;
       plainState.activeResponderId = s.activeResponderId;
       plainState.setsToWin = s.setsToWin;
@@ -376,7 +391,7 @@ export default function GameRoomPage() {
       if (s.actionStack) {
         plainState.actionStack = Array.from(s.actionStack!);
       }
-    } else if (roomName === "blackjack") {
+    } else if (normalized === GameType.BLACKJACK) {
       if (s.dealerHand) {
         plainState.dealerHand = Array.from(s.dealerHand!);
       }
@@ -445,19 +460,33 @@ export default function GameRoomPage() {
         // Check for existing session
         const session = getSession();
 
-        // For now, skip reconnection logic and just join as new player
-        // TODO: Fix reconnection token validation issue
-        clearSession(); // ensure stale tokens don't lock the seat
-
         // Get auth user ID if signed in
         const authUserId = useAuthStore.getState().user?.id;
         const browserSessionId = getBrowserSessionId();
 
-        currentRoom = await joinById(roomId, {
-          playerName,
-          userId: authUserId,
-          browserSessionId,
-        });
+        // If we have a saved reconnection token for *this* room, try resuming
+        // the same Colyseus session first. The server holds the seat open for
+        // RECONNECT_TIMEOUT (DEA-19), so this is the path that preserves the
+        // player's sessionId, board state, and turn slot across refresh, tab
+        // backgrounding, and network switches.
+        if (session?.roomId === roomId && session.reconnectionToken) {
+          try {
+            currentRoom = await reconnect(session.reconnectionToken);
+          } catch (reconnectErr) {
+            // Token expired or invalid → drop it and join cleanly.
+            console.warn("Reconnect failed, falling back to fresh join", reconnectErr);
+            clearSession();
+            currentRoom = undefined as unknown as Room<Schema>;
+          }
+        }
+
+        if (!currentRoom) {
+          currentRoom = await joinById(roomId, {
+            playerName,
+            userId: authUserId,
+            browserSessionId,
+          });
+        }
 
         setRoom(currentRoom);
         setPlayerId(currentRoom.sessionId);
@@ -522,6 +551,9 @@ export default function GameRoomPage() {
   const isMyTurn = gameState?.currentTurnId === playerId;
   const myRole = gameState?.players?.get(playerId || "");
   const isSpectator = myRole?.isSpectator || false;
+  // Materialize the players map as an array once per render so the lobby/waiting
+  // JSX can iterate without re-deriving it on every cell.
+  const players: PlayerInfo[] = gameState?.players ? Array.from(gameState.players.values()) : [];
 
   // Debug logging
   // Debug turn logic
@@ -711,10 +743,7 @@ export default function GameRoomPage() {
     try {
       const isBotRoom = room?.name?.includes("_bot");
       let newRoomId: string | null = null;
-      if (
-        isBotRoom &&
-        (targetGame === GameType.CONNECT4 || targetGame === GameType.ROCK_PAPER_SCISSORS)
-      ) {
+      if (isBotRoom) {
         newRoomId = await createBotRoom(targetGame, "medium");
       } else {
         newRoomId = await createRoom(targetGame);
@@ -778,7 +807,7 @@ export default function GameRoomPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto px-2 sm:px-4 py-4 sm:py-8">
       {/* Error toast */}
       {error && (
         <motion.div
@@ -837,7 +866,7 @@ export default function GameRoomPage() {
         </div>
 
         {/* Game Container */}
-        <div className="card p-8 max-w-4xl mx-auto">
+        <div className="card p-2 sm:p-8 max-w-4xl mx-auto">
           {/* Loading state - when gameState is not yet available */}
           {!gameState && (
             <div className="text-center py-12">
@@ -895,10 +924,118 @@ export default function GameRoomPage() {
                   ? "You're watching this game. More players can join at any time."
                   : "The game will start when all players are ready."}
               </p>
+
+              {/* Player List */}
+              {players.length > 0 && (
+                <div className="mb-6 max-w-md mx-auto">
+                  <h3 className="text-sm font-semibold text-surface-300 mb-3 text-left">
+                    Players ({players.filter((p) => !p.isSpectator).length})
+                  </h3>
+                  <div className="space-y-2">
+                    {players
+                      .filter((p) => !p.isSpectator)
+                      .map((player, index) => (
+                        <motion.div
+                          key={player.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="flex items-center justify-between p-3 bg-surface-800 rounded-lg"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg ${
+                                player.isBot
+                                  ? "bg-gradient-to-br from-purple-500 to-pink-500"
+                                  : "bg-gradient-to-br from-primary-500 to-accent-500"
+                              }`}
+                            >
+                              {player.isBot ? "🤖" : player.displayName.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="text-left">
+                              <p className="font-medium text-white flex items-center gap-2">
+                                {player.displayName}
+                                {player.isBot && (
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">
+                                    Bot
+                                  </span>
+                                )}
+                                {player.id === playerId && (
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-300">
+                                    You
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-xs text-surface-400">
+                                {player.isReady ? "✓ Ready" : "Not ready"}
+                              </p>
+                            </div>
+                          </div>
+                          {!player.isBot && player.id !== playerId && (
+                            <button
+                              className="text-surface-400 hover:text-error transition-colors p-2"
+                              title="Kick player"
+                              onClick={() => {
+                                room?.send("kick_player", { targetSessionId: player.id });
+                              }}
+                            >
+                              <svg
+                                className="w-5 h-5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M6 18L18 6M6 6l12 12"
+                                />
+                              </svg>
+                            </button>
+                          )}
+                        </motion.div>
+                      ))}
+                  </div>
+
+                  {/* Add Bot Button */}
+                  {!isSpectator && players.filter((p) => !p.isSpectator).length < 4 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 }}
+                      className="mt-4"
+                    >
+                      <Button
+                        onClick={() => room?.send("add_bot", {})}
+                        variant="secondary"
+                        size="sm"
+                        className="w-full"
+                      >
+                        <svg
+                          className="w-4 h-4 mr-2"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M12 4v16m8-8H4"
+                          />
+                        </svg>
+                        Add Bot
+                      </Button>
+                    </motion.div>
+                  )}
+                </div>
+              )}
+
               {!isSpectator && (
                 <div className="mb-6">
-                  <Button onClick={handleReady} variant="primary">
-                    Ready
+                  <Button onClick={handleReady} variant="primary" size="lg">
+                    {players.find((p) => p.id === playerId)?.isReady ? "Unready" : "Ready"}
                   </Button>
                 </div>
               )}
@@ -982,7 +1119,7 @@ export default function GameRoomPage() {
               )}
 
               {/* Sequence */}
-              {resolvedGameType === GameType.SEQUENCE && (
+              {isPlaying && resolvedGameType === GameType.SEQUENCE && gameState && (
                 <SequenceBoard
                   chips={gameState.chips || []}
                   hand={gameState.players?.get(playerId || "")?.hand || []}

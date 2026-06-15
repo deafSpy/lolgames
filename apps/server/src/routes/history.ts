@@ -8,6 +8,8 @@ import { historyService } from "../services/historyService.js";
 
 interface HistoryQuerystring {
   browserSessionId?: string;
+  cursor?: string;
+  limit?: string;
 }
 
 export async function registerHistoryRoutes(app: FastifyInstance) {
@@ -41,19 +43,28 @@ export async function registerHistoryRoutes(app: FastifyInstance) {
 
       // Always check for browserSessionId (for both authenticated and guest users)
       browserSessionId = request.query.browserSessionId || null;
-      console.log("🔍 History: Request params", { userId, browserSessionId });
+      const cursor = request.query.cursor || undefined;
+      const limit = request.query.limit ? parseInt(request.query.limit, 10) : 10;
+      console.log("🔍 History: Request params", { userId, browserSessionId, cursor, limit });
 
       // Need at least one identifier
       if (!userId && !browserSessionId) {
         return reply.status(400).send({ error: "identity_required" });
       }
 
-      // Pass both userId and browserSessionId to getRecentGames
-      const games = await historyService.getRecentGames(userId, browserSessionId, 10);
+      // Pass both userId and browserSessionId to getRecentGames with cursor pagination
+      const games = await historyService.getRecentGames(userId, browserSessionId, limit, cursor);
+
+      // Return next cursor for pagination (the timestamp of the last game in this batch)
+      const nextCursor =
+        games.length > 0 ? new Date(games[games.length - 1].endedAt).toISOString() : null;
+
       return {
         userId,
         browserSessionId,
         games,
+        nextCursor,
+        hasMore: games.length === limit,
       };
     }
   );

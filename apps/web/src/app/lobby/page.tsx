@@ -69,6 +69,7 @@ function LobbyContent() {
     isLoadingRooms,
     isConnecting,
     connectionError,
+    subscribeToLobby,
     fetchRooms,
     createRoom,
     createBotRoom,
@@ -76,16 +77,30 @@ function LobbyContent() {
   } = useGameStore();
 
   const [isCreating, setIsCreating] = useState(showCreate || !!preselectedGame);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [gameFilter, setGameFilter] = useState<GameType | null>(null);
 
-  // Fetch rooms on mount and periodically
+  // Subscribe to real-time lobby updates via Server-Sent Events (SSE)
   useEffect(() => {
-    console.log("Lobby: Setting up room fetching");
-    fetchRooms();
-    const interval = setInterval(() => {
-      console.log("Lobby: Fetching rooms periodically");
-      fetchRooms();
-    }, 5000); // Refresh every 5 seconds
-    return () => clearInterval(interval);
+    console.log("Lobby: Subscribing to real-time updates");
+    const unsubscribe = subscribeToLobby((connected) => {
+      setIsConnected(connected);
+    });
+    return () => {
+      console.log("Lobby: Unsubscribing from updates");
+      unsubscribe();
+    };
+  }, [subscribeToLobby]);
+
+  // Manual refresh handler
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchRooms();
+    } finally {
+      setIsRefreshing(false);
+    }
   }, [fetchRooms]);
 
   const handleCreateRoom = useCallback(
@@ -134,9 +149,42 @@ function LobbyContent() {
       >
         <div>
           <h1 className="text-3xl font-display font-bold">Game Lobby</h1>
-          <p className="text-surface-400 mt-1">Find a game or create your own room</p>
+          <p className="text-surface-400 mt-1">
+            Find a game or create your own room
+            <span
+              className={`ml-2 text-xs transition-colors ${
+                isConnected ? "text-success" : "text-surface-500"
+              }`}
+              title={isConnected ? "Connected to live updates" : "Connecting..."}
+            >
+              ● {isConnected ? "Live" : "Connecting..."}
+            </span>
+          </p>
         </div>
         <div className="flex gap-3">
+          <Button
+            onClick={handleRefresh}
+            variant="ghost"
+            size="lg"
+            disabled={isRefreshing || isConnecting}
+            isLoading={isRefreshing}
+            className="hidden sm:flex"
+            title="Manually refresh lobby list"
+          >
+            <svg
+              className={`w-5 h-5 ${isRefreshing ? "animate-spin" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+          </Button>
           <Button
             onClick={() => {
               const roomCode = window.prompt("Enter room code:");
@@ -179,6 +227,35 @@ function LobbyContent() {
         </div>
       )}
 
+      {/* Game Filter Chips */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          onClick={() => setGameFilter(null)}
+          className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+            gameFilter === null
+              ? "bg-primary-500 text-white"
+              : "bg-surface-800 text-surface-300 hover:bg-surface-700"
+          }`}
+        >
+          All Games
+        </button>
+        {Object.entries(gameLabels).map(([type, label]) => (
+          <button
+            key={type}
+            onClick={() =>
+              setGameFilter(gameFilter === (type as GameType) ? null : (type as GameType))
+            }
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+              gameFilter === type
+                ? "bg-primary-500 text-white"
+                : "bg-surface-800 text-surface-300 hover:bg-surface-700"
+            }`}
+          >
+            {type === GameType.ROCK_PAPER_SCISSORS ? "RPS" : label}
+          </button>
+        ))}
+      </div>
+
       {/* Room List */}
       {!isLoadingRooms || availableRooms.length > 0 ? (
         <motion.div
@@ -187,7 +264,8 @@ function LobbyContent() {
           transition={{ delay: 0.2 }}
           className="space-y-3"
         >
-          {availableRooms.length === 0 ? (
+          {availableRooms.filter((r) => gameFilter === null || r.gameType === gameFilter).length ===
+          0 ? (
             <div className="card p-12 text-center">
               <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-surface-800 flex items-center justify-center">
                 <svg
@@ -224,20 +302,22 @@ function LobbyContent() {
               </div>
             </div>
           ) : (
-            availableRooms.map((room, index) => (
-              <motion.div
-                key={room.roomId}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.05 * index }}
-              >
-                <RoomCard
-                  room={room}
-                  onJoin={() => handleJoinRoom(room.roomId)}
-                  isJoining={isConnecting}
-                />
-              </motion.div>
-            ))
+            availableRooms
+              .filter((r) => gameFilter === null || r.gameType === gameFilter)
+              .map((room, index) => (
+                <motion.div
+                  key={room.roomId}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.05 * index }}
+                >
+                  <RoomCard
+                    room={room}
+                    onJoin={() => handleJoinRoom(room.roomId)}
+                    isJoining={isConnecting}
+                  />
+                </motion.div>
+              ))
           )}
         </motion.div>
       ) : null}
@@ -340,6 +420,7 @@ function CreateRoomModal({
     GameType.ROCK_PAPER_SCISSORS,
     GameType.QUORIDOR,
     GameType.SEQUENCE,
+    GameType.CATAN,
     GameType.SPLENDOR,
     GameType.MONOPOLY_DEAL,
     GameType.BLACKJACK,
@@ -380,6 +461,9 @@ function CreateRoomModal({
       onClick={onClose}
     >
       <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create a Room"
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         className="card p-6 w-full max-w-2xl"

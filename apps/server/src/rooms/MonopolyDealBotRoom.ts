@@ -1,9 +1,7 @@
 import { Client } from "@colyseus/core";
-import {
-  MonopolyDealState,
-  MonopolyDealPlayerSchema,
-} from "@multiplayer/shared";
+import { MonopolyDealState, MonopolyDealPlayerSchema } from "@multiplayer/shared";
 import { MonopolyDealRoom } from "./MonopolyDealRoom.js";
+import type { JoinOptions } from "./BaseRoom.js";
 import { MonopolyDealBot } from "../bots/MonopolyDealBot.js";
 import { logger } from "../logger.js";
 
@@ -15,8 +13,8 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
   private bots: Map<string, MonopolyDealBot> = new Map();
   private botCount = 1;
 
-  onCreate(options: { playerName?: string; hostName?: string; createdAt?: number; vsBot?: boolean; botCount?: number }): void {
-    super.onCreate(options);
+  async onCreate(options: JoinOptions & { botCount?: number }): Promise<void> {
+    await super.onCreate(options);
     this.botCount = Math.min(options.botCount || 1, 3); // Max 3 bots
     logger.info({ roomId: this.roomId, botCount: this.botCount }, "Monopoly Deal bot room created");
   }
@@ -32,7 +30,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
 
   private addBot(index: number): void {
     const botId = `monopoly_bot_${index}`;
-    
+
     if (this.state.players.has(botId)) return;
 
     const bot = new MonopolyDealPlayerSchema();
@@ -55,10 +53,10 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
 
   protected checkStartGame(): void {
     if (this.state.status !== "waiting") return;
-    
+
     // Only need human player to be ready
     const humanPlayer = Array.from(this.state.players.values()).find(
-      p => !p.id.startsWith("monopoly_bot_")
+      (p) => !p.id.startsWith("monopoly_bot_")
     );
 
     if (humanPlayer?.isReady) {
@@ -68,7 +66,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
 
   protected startGame(): void {
     super.startGame();
-    
+
     // If bot goes first, schedule its move
     if (this.state.currentTurnId.startsWith("monopoly_bot_")) {
       this.scheduleBotMove();
@@ -77,20 +75,23 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
 
   handleMove(client: Client, data: unknown): void {
     super.handleMove(client, data);
-    
+
     // After human move, check if bot needs to respond or take turn
     this.scheduleBotMove();
   }
 
   private scheduleBotMove(): void {
     if (this.state.status !== "in_progress") return;
-    
+
     // Check if a bot needs to respond
-    if (this.state.phase === "response" && this.state.activeResponderId.startsWith("monopoly_bot_")) {
+    if (
+      this.state.phase === "response" &&
+      this.state.activeResponderId.startsWith("monopoly_bot_")
+    ) {
       this.scheduleBotResponse();
       return;
     }
-    
+
     // Check if current player is a bot
     const currentId = this.state.currentTurnId;
     if (!currentId.startsWith("monopoly_bot_")) return;
@@ -99,7 +100,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
     if (!bot) return;
 
     const delay = 600 + Math.random() * 400;
-    
+
     this.clock.setTimeout(async () => {
       if (this.state.status !== "in_progress") return;
       if (this.state.currentTurnId !== currentId) return;
@@ -108,7 +109,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
         const gameState = this.buildGameStateForBot();
         const move = await bot.getMove(gameState);
         this.executeBotMove(currentId, move as Record<string, unknown>);
-        
+
         // Schedule next bot action
         this.scheduleBotMove();
       } catch (error) {
@@ -126,7 +127,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
     if (!bot) return;
 
     const delay = 400 + Math.random() * 300;
-    
+
     this.clock.setTimeout(async () => {
       if (this.state.phase !== "response") return;
       if (this.state.activeResponderId !== responderId) return;
@@ -135,7 +136,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
         const gameState = this.buildGameStateForBot();
         const move = await bot.getMove(gameState);
         this.executeBotResponse(responderId, move as Record<string, unknown>);
-        
+
         // Check if another bot needs to respond or take turn
         this.scheduleBotMove();
       } catch (error) {
@@ -149,12 +150,12 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
 
   private buildGameStateForBot(): unknown {
     const players = new Map<string, unknown>();
-    
+
     for (const [id, player] of this.state.players) {
       const p = player as MonopolyDealPlayerSchema;
       players.set(id, {
         id: p.id,
-        hand: Array.from(p.hand).map(c => ({
+        hand: Array.from(p.hand).map((c) => ({
           id: c.id,
           cardType: c.cardType,
           value: c.value,
@@ -163,7 +164,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
           color: c.color,
           colors: c.colors ? Array.from(c.colors) : undefined,
         })),
-        bank: Array.from(p.bank).map(c => ({
+        bank: Array.from(p.bank).map((c) => ({
           id: c.id,
           cardType: c.cardType,
           value: c.value,
@@ -172,7 +173,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
         propertySets: Array.from(p.propertySets).map((ps, idx) => ({
           id: `set_${id}_${idx}`,
           color: ps.color,
-          cards: Array.from(ps.cards).map(c => ({
+          cards: Array.from(ps.cards).map((c) => ({
             id: c.id,
             cardType: c.cardType,
             value: c.value,
@@ -191,7 +192,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
       phase: this.state.phase,
       currentTurnId: this.state.currentTurnId,
       players,
-      actionStack: Array.from(this.state.actionStack).map(a => ({
+      actionStack: Array.from(this.state.actionStack).map((a) => ({
         id: a.id,
         type: a.actionType,
         sourcePlayerId: a.sourcePlayerId,
@@ -201,7 +202,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
         cardId: a.cardId,
       })),
       activeResponderId: this.state.activeResponderId,
-      discardPile: Array.from(this.state.discardPile).map(c => ({
+      discardPile: Array.from(this.state.discardPile).map((c) => ({
         id: c.id,
         cardType: c.cardType,
         value: c.value,
@@ -218,7 +219,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
 
     // Construct proper move data for parent's handleMove
     const moveData: Record<string, unknown> = { type: move.type };
-    
+
     if (move.cardIndex !== undefined) moveData.cardIndex = move.cardIndex;
     if (move.targetColor) moveData.targetColor = move.targetColor;
     if (move.targetPlayerId) moveData.targetPlayerId = move.targetPlayerId;
@@ -235,7 +236,7 @@ export class MonopolyDealBotRoom extends MonopolyDealRoom {
 
     const response = move.response as string;
     const responseData: Record<string, unknown> = { type: "respond", response };
-    
+
     if (response === "just_say_no" && move.cardId) {
       responseData.cardId = move.cardId;
     } else if (response === "pay" && move.cardIds) {

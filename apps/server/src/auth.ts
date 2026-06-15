@@ -74,27 +74,6 @@ export async function registerAuth(app: FastifyInstance) {
     `${auth.backend_url}/auth/provider/google/callback`
   );
 
-  auth.settings.onFindUserById = async (id: string) => {
-    console.log("🔍 onFindUserById called with:", id);
-    // Use database if enabled
-    if (config.database.enabled && database.connected) {
-      const user = await userService.getUserById(id);
-      if (!user) {
-        throw new Error("User not found");
-      }
-      const payload = toUserPayload(user);
-      console.log("🔍 onFindUserById returning:", payload);
-      return payload;
-    } else {
-      // In-memory fallback
-      const record = usersById.get(id);
-      if (!record) {
-        throw new Error("User not found");
-      }
-      return toUserPayload(record);
-    }
-  };
-
   auth.settings.onFindUserByEmail = async (email: string) => {
     console.log("🔍 onFindUserByEmail called with:", email);
     // Use database if enabled, otherwise fallback to in-memory
@@ -142,6 +121,7 @@ export async function registerAuth(app: FastifyInstance) {
     console.log("🔍 onRegisterWithEmailAndPassword called:", {
       email: normalizedEmail,
       hasOptions: !!options,
+      browserSessionId: options?.browserSessionId,
     });
 
     // Use database if enabled
@@ -162,6 +142,18 @@ export async function registerAuth(app: FastifyInstance) {
 
       const payload = toUserPayload(user);
       console.log("🔍 onRegisterWithEmailAndPassword returning payload:", payload);
+
+      // CRITICAL: If user was playing as guest, merge their history
+      if (options?.browserSessionId) {
+        const guestUser = await userService.getGuestByBrowserSessionId(options.browserSessionId);
+        if (guestUser) {
+          logger.info(
+            { guestId: guestUser.id, userId: user.id, browserSessionId: options.browserSessionId },
+            "🔄 Guest detected during registration, merging account..."
+          );
+          await userService.mergeGuestToUser(guestUser.id, user.id);
+        }
+      }
 
       // IMPORTANT: Return just the ID so @colyseus/auth can store it in the JWT
       // Then onParseToken will hydrate it with full user data
@@ -320,6 +312,11 @@ export async function registerAuth(app: FastifyInstance) {
     // Use database if enabled
     if (config.database.enabled && database.connected) {
       const displayName = profile.name || profile.displayName || profile.email || "Google User";
+
+      // Check if this is a new user (for guest merging)
+      const existingUser = await userService.getUserByEmail(email!).catch(() => null);
+      const isNewUser = !existingUser;
+
       const user = await userService.getOrCreateUser(
         email!,
         displayName,
@@ -335,7 +332,19 @@ export async function registerAuth(app: FastifyInstance) {
         isAnonymous: user.is_anonymous,
         authProvider: user.auth_provider,
         avatarUrl: user.avatar_url?.substring(0, 30),
+        isNewUser,
       });
+
+      // CRITICAL: If this is a new user and they were playing as guest, merge history
+      // Note: We'd need the browserSessionId from the OAuth state parameter for this
+      // For now, we log that this feature requires frontend support
+      if (isNewUser) {
+        logger.info(
+          { userId: user.id, email: user.email },
+          "🔄 New Google OAuth user - guest merge would happen here if browserSessionId was passed"
+        );
+        // TODO: Pass browserSessionId via OAuth state parameter to enable guest merging
+      }
 
       const payload = toUserPayload(user);
       console.log("🔍 Returning payload to client:", payload);
@@ -373,18 +382,24 @@ export async function registerAuth(app: FastifyInstance) {
     console.log("🔍 onParseToken called with:", JSON.stringify(data, null, 2));
 
     // If data has an 'id', try to fetch full user data
-    if (data && typeof data === "object" && "id" in data && typeof data.id === "string") {
+    if (
+      data &&
+      typeof data === "object" &&
+      data !== null &&
+      "id" in data &&
+      typeof (data as any).id === "string"
+    ) {
       console.log("🔍 Token contains ID, fetching full user data...");
       try {
         if (config.database.enabled && database.connected) {
-          const user = await userService.getUserById(data.id);
+          const user = await userService.getUserById((data as any).id);
           if (user) {
             const fullPayload = toUserPayload(user);
             console.log("🔍 Fetched and returning full payload:", fullPayload);
             return fullPayload;
           }
         } else {
-          const user = usersById.get(data.id);
+          const user = usersById.get((data as any).id);
           if (user) {
             const fullPayload = toUserPayload(user);
             console.log("🔍 Fetched and returning full payload (in-memory):", fullPayload);
@@ -414,8 +429,9 @@ export async function registerAuth(app: FastifyInstance) {
     // We need to ensure the user data is included in the JWT
     if (
       !userdata ||
+      typeof userdata !== "object" ||
       Object.keys(userdata).length === 0 ||
-      (Object.keys(userdata).length === 1 && "iat" in userdata)
+      (Object.keys(userdata).length === 1 && userdata !== null && "iat" in userdata)
     ) {
       console.warn("⚠️  onGenerateToken received empty userdata - this is a @colyseus/auth bug");
       console.warn("⚠️  JWT will only contain timestamp");

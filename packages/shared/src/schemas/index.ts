@@ -12,6 +12,7 @@ export class GamePlayerSchema extends Schema {
   @type("boolean") isBot: boolean = false;
   @type("boolean") isSpectator: boolean = false;
   @type("boolean") wasInitialPlayer: boolean = false;
+  @type("boolean") isHost: boolean = false; // First player to join becomes host
 }
 
 /**
@@ -331,7 +332,8 @@ export class MonopolyDealActionRequestSchema extends Schema {
 export class MonopolyDealPlayerSchema extends GamePlayerSchema {
   @type([MonopolyDealCardSchema]) hand = new ArraySchema<MonopolyDealCardSchema>();
   @type([MonopolyDealCardSchema]) bank = new ArraySchema<MonopolyDealCardSchema>(); // Money pile
-  @type([MonopolyDealPropertySetSchema]) propertySets = new ArraySchema<MonopolyDealPropertySetSchema>();
+  @type([MonopolyDealPropertySetSchema]) propertySets =
+    new ArraySchema<MonopolyDealPropertySetSchema>();
   @type("number") completeSets: number = 0;
   @type("number") actionsRemaining: number = 3;
   @type("number") amountOwed: number = 0;
@@ -352,7 +354,8 @@ export class MonopolyDealState extends Schema {
   @type("string") phase: string = "draw"; // draw, play, discard, respond, pay, select_target
   @type("number") deckRemaining: number = 0;
   @type([MonopolyDealCardSchema]) discardPile = new ArraySchema<MonopolyDealCardSchema>();
-  @type([MonopolyDealActionRequestSchema]) actionStack = new ArraySchema<MonopolyDealActionRequestSchema>();
+  @type([MonopolyDealActionRequestSchema]) actionStack =
+    new ArraySchema<MonopolyDealActionRequestSchema>();
   @type("string") activeResponderId: string = ""; // Player who must respond to an action
   @type("number") setsToWin: number = 3;
 }
@@ -426,4 +429,3 @@ export class BlackjackState extends Schema {
 
 // Re-export Schema for convenience
 export { Schema, ArraySchema, MapSchema, type };
-

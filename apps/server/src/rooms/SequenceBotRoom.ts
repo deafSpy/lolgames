@@ -1,10 +1,7 @@
 import { Client } from "@colyseus/core";
-import {
-  SequenceState,
-  SequencePlayer,
-  SequenceCard,
-} from "@multiplayer/shared";
+import { SequenceState, SequencePlayer, SequenceCard } from "@multiplayer/shared";
 import { SequenceRoom } from "./SequenceRoom.js";
+import type { JoinOptions } from "./BaseRoom.js";
 import { SequenceBot } from "../bots/SequenceBot.js";
 import { logger } from "../logger.js";
 
@@ -16,8 +13,8 @@ export class SequenceBotRoom extends SequenceRoom {
   private bots: Map<string, SequenceBot> = new Map();
   private botCount = 1;
 
-  onCreate(options: { playerName?: string; hostName?: string; createdAt?: number; vsBot?: boolean; botCount?: number }): void {
-    super.onCreate(options);
+  async onCreate(options: JoinOptions & { botCount?: number }): Promise<void> {
+    await super.onCreate(options);
     this.botCount = Math.min(options.botCount || 1, 3);
     logger.info({ roomId: this.roomId, botCount: this.botCount }, "Sequence bot room created");
   }
@@ -33,7 +30,7 @@ export class SequenceBotRoom extends SequenceRoom {
 
   private addBot(index: number): void {
     const botId = `sequence_bot_${index}`;
-    
+
     if (this.state.players.has(botId)) return;
 
     const bot = new SequencePlayer();
@@ -43,7 +40,7 @@ export class SequenceBotRoom extends SequenceRoom {
     bot.isConnected = true;
     bot.joinedAt = Date.now();
     bot.isBot = true;
-    
+
     // Alternate teams
     const playerCount = this.state.players.size;
     bot.teamId = playerCount % 2;
@@ -59,10 +56,10 @@ export class SequenceBotRoom extends SequenceRoom {
 
   protected checkStartGame(): void {
     if (this.state.status !== "waiting") return;
-    
+
     // Only need human player to be ready
     const humanPlayer = Array.from(this.state.players.values()).find(
-      p => !p.id.startsWith("sequence_bot_")
+      (p) => !p.id.startsWith("sequence_bot_")
     );
 
     if (humanPlayer?.isReady) {
@@ -72,7 +69,7 @@ export class SequenceBotRoom extends SequenceRoom {
 
   protected startGame(): void {
     super.startGame();
-    
+
     // If bot goes first, schedule its move
     if (this.state.currentTurnId.startsWith("sequence_bot_")) {
       this.scheduleBotMove();
@@ -81,14 +78,14 @@ export class SequenceBotRoom extends SequenceRoom {
 
   handleMove(client: Client, data: unknown): void {
     super.handleMove(client, data);
-    
+
     // After human move, check if next player is a bot
     this.scheduleBotMove();
   }
 
   private scheduleBotMove(): void {
     if (this.state.status !== "in_progress") return;
-    
+
     const currentId = this.state.currentTurnId;
     if (!currentId.startsWith("sequence_bot_")) return;
 
@@ -96,17 +93,21 @@ export class SequenceBotRoom extends SequenceRoom {
     if (!bot) return;
 
     const delay = 700 + Math.random() * 500;
-    
+
     this.clock.setTimeout(async () => {
       if (this.state.status !== "in_progress") return;
       if (this.state.currentTurnId !== currentId) return;
 
       try {
         const gameState = this.buildGameStateForBot();
-        const move = await bot.getMove(gameState) as { cardIndex: number; boardX: number; boardY: number };
-        
+        const move = (await bot.getMove(gameState)) as {
+          cardIndex: number;
+          boardX: number;
+          boardY: number;
+        };
+
         this.executeBotMove(currentId, move);
-        
+
         // Schedule next bot move if needed
         this.scheduleBotMove();
       } catch (error) {
@@ -120,13 +121,13 @@ export class SequenceBotRoom extends SequenceRoom {
 
   private buildGameStateForBot(): unknown {
     const players = new Map<string, unknown>();
-    
+
     for (const [id, player] of this.state.players) {
       const p = player as SequencePlayer;
       players.set(id, {
         id: p.id,
         teamId: p.teamId,
-        hand: Array.from(p.hand).map(c => ({
+        hand: Array.from(p.hand).map((c) => ({
           rank: c.rank,
           suit: c.suit,
         })),
@@ -136,7 +137,7 @@ export class SequenceBotRoom extends SequenceRoom {
     return {
       currentTurnId: this.state.currentTurnId,
       players,
-      chips: Array.from(this.state.chips).map(c => ({
+      chips: Array.from(this.state.chips).map((c) => ({
         x: c.x,
         y: c.y,
         teamId: c.teamId,
@@ -160,7 +161,7 @@ export class SequenceBotRoom extends SequenceRoom {
     } as Client;
 
     // Use parent's move handler
-    (this as SequenceRoom).handleMove(fakeClient, {
+    this.handleMove(fakeClient, {
       cardIndex: move.cardIndex,
       boardX: move.boardX,
       boardY: move.boardY,
@@ -187,15 +188,20 @@ export class SequenceBotRoom extends SequenceRoom {
 
     for (let cardIndex = 0; cardIndex < player.hand.length; cardIndex++) {
       const card = player.hand[cardIndex] as SequenceCard;
-      const suitChar = card.suit === "hearts" ? "H" : 
-                       card.suit === "diamonds" ? "D" : 
-                       card.suit === "clubs" ? "C" : "S";
+      const suitChar =
+        card.suit === "hearts"
+          ? "H"
+          : card.suit === "diamonds"
+            ? "D"
+            : card.suit === "clubs"
+              ? "C"
+              : "S";
       const cardStr = `${card.rank}${suitChar}`;
 
       for (let y = 0; y < 10; y++) {
         for (let x = 0; x < 10; x++) {
           if (BOARD_LAYOUT[y][x] === cardStr) {
-            const occupied = this.state.chips.some(c => c.x === x && c.y === y);
+            const occupied = this.state.chips.some((c) => c.x === x && c.y === y);
             if (!occupied) {
               this.executeBotMove(botId, { cardIndex, boardX: x, boardY: y });
               return;

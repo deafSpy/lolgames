@@ -93,7 +93,7 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
 
   private drawCard(faceUp: boolean = true): BlackjackCardSchema | null {
     // Reshuffle if less than 20% of shoe remains
-    if (this.shoe.length < (this.state.deckCount * 52) * 0.2) {
+    if (this.shoe.length < this.state.deckCount * 52 * 0.2) {
       this.initializeShoe();
     }
 
@@ -105,7 +105,9 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     return card;
   }
 
-  private calculateHandValue(cards: ArraySchema<BlackjackCardSchema> | BlackjackCardSchema[]): number {
+  private calculateHandValue(
+    cards: ArraySchema<BlackjackCardSchema> | BlackjackCardSchema[]
+  ): number {
     let value = 0;
     let aces = 0;
 
@@ -130,7 +132,9 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     return value;
   }
 
-  private calculateTrueHandValue(cards: ArraySchema<BlackjackCardSchema> | BlackjackCardSchema[]): number {
+  private calculateTrueHandValue(
+    cards: ArraySchema<BlackjackCardSchema> | BlackjackCardSchema[]
+  ): number {
     // Calculate value including face-down cards (for server logic)
     let value = 0;
     let aces = 0;
@@ -281,7 +285,11 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     }
   }
 
-  private handlePlaceBet(client: Client, player: BlackjackPlayerSchema, data: { amount: number; isSecret?: boolean }): void {
+  private handlePlaceBet(
+    client: Client,
+    player: BlackjackPlayerSchema,
+    data: { amount: number; isSecret?: boolean }
+  ): void {
     if (this.state.phase !== "betting") {
       client.send("error", { message: "Not in betting phase" });
       return;
@@ -412,7 +420,9 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     }
 
     this.state.dealerValue = this.calculateHandValue(this.state.dealerHand);
-    this.state.dealerBlackjack = this.calculateTrueHandValue(this.state.dealerHand) === 21;
+    this.state.dealerBlackjack =
+      this.state.dealerHand.length === 2 &&
+      this.calculateTrueHandValue(this.state.dealerHand) === 21;
 
     this.broadcast("cards_dealt", {});
 
@@ -479,7 +489,10 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
 
       if (hand.value > 21) {
         hand.isBusted = true;
-        this.broadcast("player_busted", { playerId: client.sessionId, handIndex: player.currentHandIndex });
+        this.broadcast("player_busted", {
+          playerId: client.sessionId,
+          handIndex: player.currentHandIndex,
+        });
       }
 
       this.broadcast("card_hit", {
@@ -506,7 +519,10 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     }
 
     hand.isStanding = true;
-    this.broadcast("player_stands", { playerId: client.sessionId, handIndex: player.currentHandIndex });
+    this.broadcast("player_stands", {
+      playerId: client.sessionId,
+      handIndex: player.currentHandIndex,
+    });
 
     this.checkMoveToNextPlayer(player);
   }
@@ -854,7 +870,9 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
 
     // Skip eliminated players
     while (this.playerOrder.length > 0) {
-      const nextPlayer = this.state.players.get(this.playerOrder[nextButtonIndex]) as BlackjackPlayerSchema;
+      const nextPlayer = this.state.players.get(
+        this.playerOrder[nextButtonIndex]
+      ) as BlackjackPlayerSchema;
       if (nextPlayer && !nextPlayer.isEliminated) {
         break;
       }

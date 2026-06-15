@@ -7,7 +7,7 @@ import { useAuthStore } from "@/stores/authStore";
 
 const GAME_TYPE_LABELS: Record<GameType, string> = {
   [GameType.CONNECT4]: "Connect 4",
-  [GameType.RPS]: "Rock Paper Scissors",
+  [GameType.ROCK_PAPER_SCISSORS]: "Rock Paper Scissors",
   [GameType.QUORIDOR]: "Quoridor",
   [GameType.SEQUENCE]: "Sequence",
   [GameType.CATAN]: "Catan",

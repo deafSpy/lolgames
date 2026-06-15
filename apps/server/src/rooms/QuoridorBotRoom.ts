@@ -1,6 +1,7 @@
 import { Client } from "@colyseus/core";
 import { QuoridorPlayer, QuoridorWall } from "@multiplayer/shared";
 import { QuoridorRoom } from "./QuoridorRoom.js";
+import type { JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
 
 type Difficulty = "easy" | "medium" | "hard";
@@ -21,14 +22,8 @@ export class QuoridorBotRoom extends QuoridorRoom {
   private botId = "quoridor_bot";
   private difficulty: Difficulty = "hard";
 
-  onCreate(options: {
-    playerName?: string;
-    hostName?: string;
-    createdAt?: number;
-    vsBot?: boolean;
-    difficulty?: Difficulty;
-  }): void {
-    super.onCreate(options);
+  async onCreate(options: JoinOptions & { difficulty?: Difficulty }): Promise<void> {
+    await super.onCreate(options);
     this.difficulty = options.difficulty || this.difficulty;
     logger.info({ roomId: this.roomId, difficulty: this.difficulty }, "Quoridor bot room created");
   }

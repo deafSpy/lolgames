@@ -34,11 +34,24 @@ interface RobberData {
 }
 
 const TILE_TYPES: TileType[] = [
-  "wood", "wood", "wood", "wood",
-  "brick", "brick", "brick",
-  "wheat", "wheat", "wheat", "wheat",
-  "sheep", "sheep", "sheep", "sheep",
-  "ore", "ore", "ore",
+  "wood",
+  "wood",
+  "wood",
+  "wood",
+  "brick",
+  "brick",
+  "brick",
+  "wheat",
+  "wheat",
+  "wheat",
+  "wheat",
+  "sheep",
+  "sheep",
+  "sheep",
+  "sheep",
+  "ore",
+  "ore",
+  "ore",
   "desert",
 ];
 
@@ -46,11 +59,25 @@ const NUMBERS = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
 
 // Standard Catan hex positions (axial coordinates)
 const HEX_POSITIONS = [
-  { q: 0, r: -2 }, { q: 1, r: -2 }, { q: 2, r: -2 },
-  { q: -1, r: -1 }, { q: 0, r: -1 }, { q: 1, r: -1 }, { q: 2, r: -1 },
-  { q: -2, r: 0 }, { q: -1, r: 0 }, { q: 0, r: 0 }, { q: 1, r: 0 }, { q: 2, r: 0 },
-  { q: -2, r: 1 }, { q: -1, r: 1 }, { q: 0, r: 1 }, { q: 1, r: 1 },
-  { q: -2, r: 2 }, { q: -1, r: 2 }, { q: 0, r: 2 },
+  { q: 0, r: -2 },
+  { q: 1, r: -2 },
+  { q: 2, r: -2 },
+  { q: -1, r: -1 },
+  { q: 0, r: -1 },
+  { q: 1, r: -1 },
+  { q: 2, r: -1 },
+  { q: -2, r: 0 },
+  { q: -1, r: 0 },
+  { q: 0, r: 0 },
+  { q: 1, r: 0 },
+  { q: 2, r: 0 },
+  { q: -2, r: 1 },
+  { q: -1, r: 1 },
+  { q: 0, r: 1 },
+  { q: 1, r: 1 },
+  { q: -2, r: 2 },
+  { q: -1, r: 2 },
+  { q: 0, r: 2 },
 ];
 
 export class CatanRoom extends BaseRoom<CatanState> {
@@ -156,7 +183,7 @@ export class CatanRoom extends BaseRoom<CatanState> {
     player.isReady = false;
     player.isConnected = true;
     player.joinedAt = Date.now();
-    
+
     // Starting resources: none
     player.wood = 0;
     player.brick = 0;
@@ -337,11 +364,21 @@ export class CatanRoom extends BaseRoom<CatanState> {
 
   private giveResource(player: CatanPlayerSchema, resource: ResourceType, amount: number): void {
     switch (resource) {
-      case "wood": player.wood += amount; break;
-      case "brick": player.brick += amount; break;
-      case "wheat": player.wheat += amount; break;
-      case "sheep": player.sheep += amount; break;
-      case "ore": player.ore += amount; break;
+      case "wood":
+        player.wood += amount;
+        break;
+      case "brick":
+        player.brick += amount;
+        break;
+      case "wheat":
+        player.wheat += amount;
+        break;
+      case "sheep":
+        player.sheep += amount;
+        break;
+      case "ore":
+        player.ore += amount;
+        break;
     }
   }
 
@@ -373,7 +410,7 @@ export class CatanRoom extends BaseRoom<CatanState> {
 
   private handleBankTrade(client: Client, data: TradeData): void {
     const player = this.state.players.get(client.sessionId) as CatanPlayerSchema;
-    
+
     // Standard 4:1 trade
     if (data.giveAmount !== 4) {
       client.send("error", { message: "Bank trades require 4:1 ratio" });
@@ -397,7 +434,7 @@ export class CatanRoom extends BaseRoom<CatanState> {
     const player = this.state.players.get(client.sessionId) as CatanPlayerSchema;
 
     switch (data.action) {
-      case "road":
+      case "road": {
         if (!this.canBuildRoad(data.edgeId!, client.sessionId)) {
           client.send("error", { message: "Cannot build road here" });
           return;
@@ -416,20 +453,28 @@ export class CatanRoom extends BaseRoom<CatanState> {
           this.broadcast("road_built", { playerId: client.sessionId, edgeId: data.edgeId });
         }
         break;
+      }
 
-      case "settlement":
+      case "settlement": {
         if (!this.canBuildSettlement(data.vertexId!, client.sessionId)) {
           client.send("error", { message: "Cannot build settlement here" });
           return;
         }
-        if (!this.takeResource(player, "wood", 1) ||
-            !this.takeResource(player, "brick", 1) ||
-            !this.takeResource(player, "wheat", 1) ||
-            !this.takeResource(player, "sheep", 1)) {
+        if (
+          !this.takeResource(player, "wood", 1) ||
+          !this.takeResource(player, "brick", 1) ||
+          !this.takeResource(player, "wheat", 1) ||
+          !this.takeResource(player, "sheep", 1)
+        ) {
           // Refund any taken
-          player.wood++; player.brick++; player.wheat++; player.sheep++;
-          this.takeResource(player, "wood", 1); this.takeResource(player, "brick", 1);
-          this.takeResource(player, "wheat", 1); this.takeResource(player, "sheep", 1);
+          player.wood++;
+          player.brick++;
+          player.wheat++;
+          player.sheep++;
+          this.takeResource(player, "wood", 1);
+          this.takeResource(player, "brick", 1);
+          this.takeResource(player, "wheat", 1);
+          this.takeResource(player, "sheep", 1);
           client.send("error", { message: "Not enough resources" });
           return;
         }
@@ -439,19 +484,29 @@ export class CatanRoom extends BaseRoom<CatanState> {
           vertex.playerId = client.sessionId;
           player.settlementsBuilt++;
           player.points++;
-          this.broadcast("settlement_built", { playerId: client.sessionId, vertexId: data.vertexId });
+          this.broadcast("settlement_built", {
+            playerId: client.sessionId,
+            vertexId: data.vertexId,
+          });
         }
         break;
+      }
 
-      case "city":
+      case "city": {
         const cityVertex = this.state.vertices.get(data.vertexId!);
-        if (!cityVertex || cityVertex.building !== "settlement" || cityVertex.playerId !== client.sessionId) {
+        if (
+          !cityVertex ||
+          cityVertex.building !== "settlement" ||
+          cityVertex.playerId !== client.sessionId
+        ) {
           client.send("error", { message: "Must upgrade your own settlement" });
           return;
         }
         if (!this.takeResource(player, "wheat", 2) || !this.takeResource(player, "ore", 3)) {
-          player.wheat += 2; player.ore += 3;
-          this.takeResource(player, "wheat", 2); this.takeResource(player, "ore", 3);
+          player.wheat += 2;
+          player.ore += 3;
+          this.takeResource(player, "wheat", 2);
+          this.takeResource(player, "ore", 3);
           client.send("error", { message: "Not enough resources (need 2 wheat + 3 ore)" });
           return;
         }
@@ -461,6 +516,7 @@ export class CatanRoom extends BaseRoom<CatanState> {
         player.points++;
         this.broadcast("city_built", { playerId: client.sessionId, vertexId: data.vertexId });
         break;
+      }
     }
 
     // Check win after building
@@ -480,14 +536,14 @@ export class CatanRoom extends BaseRoom<CatanState> {
           return;
         }
       }
-      tile.hasRobber = (tile.q === data.q && tile.r === data.r);
+      tile.hasRobber = tile.q === data.q && tile.r === data.r;
     }
 
     // Steal from player if specified
     if (data.stealFromPlayerId) {
       const victim = this.state.players.get(data.stealFromPlayerId) as CatanPlayerSchema;
       const thief = this.state.players.get(client.sessionId) as CatanPlayerSchema;
-      
+
       if (victim && thief) {
         const resources: ResourceType[] = [];
         if (victim.wood > 0) resources.push(...Array(victim.wood).fill("wood"));
@@ -629,8 +685,8 @@ export class CatanRoom extends BaseRoom<CatanState> {
     for (const [, player] of this.state.players) {
       const p = player as CatanPlayerSchema;
       const hadIt = p.hasLongestRoad;
-      p.hasLongestRoad = (longestPlayer === p);
-      
+      p.hasLongestRoad = longestPlayer === p;
+
       if (p.hasLongestRoad && !hadIt) {
         p.points += 2;
       } else if (!p.hasLongestRoad && hadIt) {

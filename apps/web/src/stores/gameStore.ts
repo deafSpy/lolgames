@@ -12,6 +12,7 @@ import {
   clearSession,
   create as createRoomDirect,
   getBrowserSessionId,
+  subscribeToLobbyUpdates,
   type RoomListing,
 } from "@/lib/colyseus";
 import { useAuthStore } from "./authStore";
@@ -33,6 +34,7 @@ interface GameStore {
   // Actions
   setPlayerName: (name: string) => void;
   fetchRooms: (gameType?: string) => Promise<void>;
+  subscribeToLobby: (onConnectionChange?: (connected: boolean) => void) => () => void;
   createRoom: (gameType: GameType, options?: Record<string, unknown>) => Promise<string | null>;
   createBotRoom: (
     gameType: GameType,
@@ -55,6 +57,66 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setPlayerName: (name: string) => {
     set({ playerName: name });
+  },
+
+  subscribeToLobby: (onConnectionChange?: (connected: boolean) => void) => {
+    console.log("Subscribing to lobby updates via SSE");
+    return subscribeToLobbyUpdates((lobbies) => {
+      console.log("Received lobby update:", lobbies.length, "rooms");
+      const lobbyRooms: LobbyRoom[] = lobbies.map((room) => {
+        // Normalize game type from room name (handle bot rooms like "quoridor_bot")
+        let gameType = room.metadata?.gameType as GameType;
+        if (!gameType && room.name) {
+          // Extract game type from room name (remove "_bot" suffix if present)
+          const normalizedName = room.name.replace("_bot", "");
+          switch (normalizedName) {
+            case "connect4":
+              gameType = GameType.CONNECT4;
+              break;
+            case "rps":
+              gameType = GameType.ROCK_PAPER_SCISSORS;
+              break;
+            case "quoridor":
+              gameType = GameType.QUORIDOR;
+              break;
+            case "sequence":
+              gameType = GameType.SEQUENCE;
+              break;
+            case "catan":
+              gameType = GameType.CATAN;
+              break;
+            case "splendor":
+              gameType = GameType.SPLENDOR;
+              break;
+            case "monopoly_deal":
+              gameType = GameType.MONOPOLY_DEAL;
+              break;
+            case "blackjack":
+              gameType = GameType.BLACKJACK;
+              break;
+            default:
+              gameType = GameType.CONNECT4;
+          }
+        }
+
+        // Get status from metadata, fallback to checking player count
+        const status =
+          (room.metadata?.status as GameStatus) ||
+          (room.clients >= room.maxClients ? GameStatus.IN_PROGRESS : GameStatus.WAITING);
+
+        return {
+          roomId: room.roomId,
+          gameType: gameType || GameType.CONNECT4,
+          hostName: (room.metadata?.hostName as string) || "Unknown",
+          playerCount: room.clients,
+          maxPlayers: room.maxClients,
+          status,
+          createdAt: (room.metadata?.createdAt as number) || Date.now(),
+          vsBot: room.name?.includes("_bot") || false,
+        };
+      });
+      set({ availableRooms: lobbyRooms, isLoadingRooms: false });
+    }, onConnectionChange);
   },
 
   fetchRooms: async (gameType?: string) => {

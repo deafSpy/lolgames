@@ -1,9 +1,7 @@
 import { Client } from "@colyseus/core";
-import {
-  SplendorState,
-  SplendorPlayerSchema,
-} from "@multiplayer/shared";
+import { SplendorState, SplendorPlayerSchema } from "@multiplayer/shared";
 import { SplendorRoom } from "./SplendorRoom.js";
+import type { JoinOptions } from "./BaseRoom.js";
 import { SplendorBot } from "../bots/SplendorBot.js";
 import { logger } from "../logger.js";
 
@@ -15,8 +13,8 @@ export class SplendorBotRoom extends SplendorRoom {
   private bots: Map<string, SplendorBot> = new Map();
   private botCount = 1; // Number of bots to add
 
-  onCreate(options: { playerName?: string; hostName?: string; createdAt?: number; vsBot?: boolean; botCount?: number }): void {
-    super.onCreate(options);
+  async onCreate(options: JoinOptions & { botCount?: number }): Promise<void> {
+    await super.onCreate(options);
     this.botCount = options.botCount || 1;
     logger.info({ roomId: this.roomId, botCount: this.botCount }, "Splendor bot room created");
   }
@@ -32,7 +30,7 @@ export class SplendorBotRoom extends SplendorRoom {
 
   private addBot(index: number): void {
     const botId = `splendor_bot_${index}`;
-    
+
     if (this.state.players.has(botId)) return;
 
     const bot = new SplendorPlayerSchema();
@@ -61,10 +59,10 @@ export class SplendorBotRoom extends SplendorRoom {
 
   protected checkStartGame(): void {
     if (this.state.status !== "waiting") return;
-    
+
     // Only need human player to be ready
     const humanPlayer = Array.from(this.state.players.values()).find(
-      p => !p.id.startsWith("splendor_bot_")
+      (p) => !p.id.startsWith("splendor_bot_")
     );
 
     if (humanPlayer?.isReady) {
@@ -74,7 +72,7 @@ export class SplendorBotRoom extends SplendorRoom {
 
   protected startGame(): void {
     super.startGame();
-    
+
     // If bot goes first, schedule its move
     if (this.state.currentTurnId.startsWith("splendor_bot_")) {
       this.scheduleBotMove();
@@ -83,14 +81,14 @@ export class SplendorBotRoom extends SplendorRoom {
 
   handleMove(client: Client, data: unknown): void {
     super.handleMove(client, data);
-    
+
     // After human move, check if next player is a bot
     this.scheduleBotMove();
   }
 
   private scheduleBotMove(): void {
     if (this.state.status !== "in_progress") return;
-    
+
     const currentId = this.state.currentTurnId;
     if (!currentId.startsWith("splendor_bot_")) return;
 
@@ -99,7 +97,7 @@ export class SplendorBotRoom extends SplendorRoom {
 
     // Add delay to make it feel more natural
     const delay = 800 + Math.random() * 500;
-    
+
     this.clock.setTimeout(async () => {
       if (this.state.status !== "in_progress") return;
       if (this.state.currentTurnId !== currentId) return;
@@ -108,21 +106,24 @@ export class SplendorBotRoom extends SplendorRoom {
         // Build game state for bot
         const gameState = this.buildGameStateForBot();
         const move = await bot.getMove(gameState);
-        
-        if (!move || typeof move !== 'object') {
+
+        if (!move || typeof move !== "object") {
           logger.error({ botId: currentId, move }, "Bot returned invalid move");
           this.nextTurn();
           this.scheduleBotMove();
           return;
         }
-        
+
         // Execute bot move
         this.executeBotMove(currentId, move as Record<string, unknown>);
-        
+
         // Check if next player is also a bot
         this.scheduleBotMove();
       } catch (error) {
-        logger.error({ error: error instanceof Error ? error.message : String(error), botId: currentId }, "Bot move failed");
+        logger.error(
+          { error: error instanceof Error ? error.message : String(error), botId: currentId },
+          "Bot move failed"
+        );
         // Skip bot turn on error
         this.nextTurn();
         this.scheduleBotMove();
@@ -132,7 +133,7 @@ export class SplendorBotRoom extends SplendorRoom {
 
   private buildGameStateForBot(): unknown {
     const players = new Map<string, unknown>();
-    
+
     for (const [id, player] of this.state.players) {
       const p = player as SplendorPlayerSchema;
       players.set(id, {
@@ -144,7 +145,7 @@ export class SplendorBotRoom extends SplendorRoom {
         gemBlack: p.gemBlack,
         gemGold: p.gemGold,
         points: p.points,
-        cards: Array.from(p.cards).map(c => ({
+        cards: Array.from(p.cards).map((c) => ({
           id: c.id,
           tier: c.tier,
           gemType: c.gemType,
@@ -155,7 +156,7 @@ export class SplendorBotRoom extends SplendorRoom {
           costRed: c.costRed,
           costBlack: c.costBlack,
         })),
-        reservedCards: Array.from(p.reserved).map(c => ({
+        reservedCards: Array.from(p.reserved).map((c) => ({
           id: c.id,
           tier: c.tier,
           gemType: c.gemType,
@@ -176,7 +177,7 @@ export class SplendorBotRoom extends SplendorRoom {
       bankRed: this.state.bankRed,
       bankBlack: this.state.bankBlack,
       bankGold: this.state.bankGold,
-      tier1Cards: Array.from(this.state.tier1Cards).map(c => ({
+      tier1Cards: Array.from(this.state.tier1Cards).map((c) => ({
         id: c.id,
         tier: c.tier,
         gemType: c.gemType,
@@ -187,7 +188,7 @@ export class SplendorBotRoom extends SplendorRoom {
         costRed: c.costRed,
         costBlack: c.costBlack,
       })),
-      tier2Cards: Array.from(this.state.tier2Cards).map(c => ({
+      tier2Cards: Array.from(this.state.tier2Cards).map((c) => ({
         id: c.id,
         tier: c.tier,
         gemType: c.gemType,
@@ -198,7 +199,7 @@ export class SplendorBotRoom extends SplendorRoom {
         costRed: c.costRed,
         costBlack: c.costBlack,
       })),
-      tier3Cards: Array.from(this.state.tier3Cards).map(c => ({
+      tier3Cards: Array.from(this.state.tier3Cards).map((c) => ({
         id: c.id,
         tier: c.tier,
         gemType: c.gemType,
@@ -209,7 +210,7 @@ export class SplendorBotRoom extends SplendorRoom {
         costRed: c.costRed,
         costBlack: c.costBlack,
       })),
-      nobles: Array.from(this.state.nobles).map(n => ({
+      nobles: Array.from(this.state.nobles).map((n) => ({
         id: n.id,
         points: n.points,
         reqWhite: n.reqWhite,
@@ -233,7 +234,7 @@ export class SplendorBotRoom extends SplendorRoom {
     }
 
     // Ensure move has an action
-    if (!move.action || typeof move.action !== 'string') {
+    if (!move.action || typeof move.action !== "string") {
       logger.warn({ botId, move }, "Bot move missing action");
       this.nextTurn();
       return;
@@ -271,24 +272,36 @@ export class SplendorBotRoom extends SplendorRoom {
   }
 
   // Override parent methods to handle bot moves
-  private handleBotTakeGems(_client: Client, player: SplendorPlayerSchema, move: Record<string, unknown>): void {
+  private handleBotTakeGems(
+    _client: Client,
+    player: SplendorPlayerSchema,
+    move: Record<string, unknown>
+  ): void {
     const gems = move.gems as Record<string, number>;
-    
+
     // Apply gems
     for (const [gem, amount] of Object.entries(gems)) {
-      const gemKey = `gem${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof SplendorPlayerSchema;
-      const bankKey = `bank${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof typeof this.state;
-      
-      if (typeof player[gemKey] === 'number' && typeof this.state[bankKey] === 'number') {
+      const gemKey =
+        `gem${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof SplendorPlayerSchema;
+      const bankKey =
+        `bank${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof typeof this.state;
+
+      if (typeof player[gemKey] === "number" && typeof this.state[bankKey] === "number") {
         (player[gemKey] as number) += amount;
         (this.state[bankKey] as number) -= amount;
       }
     }
 
     this.broadcast("gems_taken", { playerId: player.id, gems });
-    
+
     // Check if need to discard
-    const totalGems = player.gemWhite + player.gemBlue + player.gemGreen + player.gemRed + player.gemBlack + player.gemGold;
+    const totalGems =
+      player.gemWhite +
+      player.gemBlue +
+      player.gemGreen +
+      player.gemRed +
+      player.gemBlack +
+      player.gemGold;
     if (totalGems > 10) {
       this.state.phase = "discard_gems";
       // Bot will handle discard on next scheduled move
@@ -297,30 +310,50 @@ export class SplendorBotRoom extends SplendorRoom {
     }
   }
 
-  private handleBotBuyCard(_client: Client, player: SplendorPlayerSchema, move: Record<string, unknown>): void {
+  private handleBotBuyCard(
+    _client: Client,
+    player: SplendorPlayerSchema,
+    move: Record<string, unknown>
+  ): void {
     const cardId = move.cardId as string;
-    
+
     // Find card in tiers or reserved
-    let card: SplendorPlayerSchema['cards'][0] | null = null;
+    let card: SplendorPlayerSchema["cards"][0] | null = null;
     let tier = 0;
     let fromReserved = false;
-    
+
     for (const c of this.state.tier1Cards) {
-      if (c.id === cardId) { card = c; tier = 1; break; }
+      if (c.id === cardId) {
+        card = c;
+        tier = 1;
+        break;
+      }
     }
     if (!card) {
       for (const c of this.state.tier2Cards) {
-        if (c.id === cardId) { card = c; tier = 2; break; }
+        if (c.id === cardId) {
+          card = c;
+          tier = 2;
+          break;
+        }
       }
     }
     if (!card) {
       for (const c of this.state.tier3Cards) {
-        if (c.id === cardId) { card = c; tier = 3; break; }
+        if (c.id === cardId) {
+          card = c;
+          tier = 3;
+          break;
+        }
       }
     }
     if (!card) {
       for (const c of player.reserved) {
-        if (c.id === cardId) { card = c; fromReserved = true; break; }
+        if (c.id === cardId) {
+          card = c;
+          fromReserved = true;
+          break;
+        }
       }
     }
 
@@ -331,19 +364,24 @@ export class SplendorBotRoom extends SplendorRoom {
 
     // Pay for card (simplified - just deduct gems)
     this.payForCard(player, card);
-    
+
     // Add card to player's collection
     player.cards.push(card);
     player.points += card.points;
 
     // Remove from source
     if (fromReserved) {
-      const idx = Array.from(player.reserved).findIndex(c => c.id === cardId);
+      const idx = Array.from(player.reserved).findIndex((c) => c.id === cardId);
       if (idx >= 0) player.reserved.splice(idx, 1);
     } else {
       // Remove card from display and refill from deck (same as parent class)
-      const tierCards = tier === 1 ? this.state.tier1Cards : tier === 2 ? this.state.tier2Cards : this.state.tier3Cards;
-      const cardIdx = Array.from(tierCards).findIndex(c => c.id === cardId);
+      const tierCards =
+        tier === 1
+          ? this.state.tier1Cards
+          : tier === 2
+            ? this.state.tier2Cards
+            : this.state.tier3Cards;
+      const cardIdx = Array.from(tierCards).findIndex((c) => c.id === cardId);
       if (cardIdx >= 0) {
         tierCards.splice(cardIdx, 1);
         this.refillTier(tier as 1 | 2 | 3);
@@ -354,13 +392,22 @@ export class SplendorBotRoom extends SplendorRoom {
     this.checkNobleVisit(player);
   }
 
-  private handleBotReserveCard(_client: Client, player: SplendorPlayerSchema, move: Record<string, unknown>): void {
+  private handleBotReserveCard(
+    _client: Client,
+    player: SplendorPlayerSchema,
+    move: Record<string, unknown>
+  ): void {
     const cardId = move.cardId as string;
     const tier = move.tier as number;
 
     // Find and remove card from table
-    let card: SplendorPlayerSchema['cards'][0] | null = null;
-    const tierCards = tier === 1 ? this.state.tier1Cards : tier === 2 ? this.state.tier2Cards : this.state.tier3Cards;
+    let card: SplendorPlayerSchema["cards"][0] | null = null;
+    const tierCards =
+      tier === 1
+        ? this.state.tier1Cards
+        : tier === 2
+          ? this.state.tier2Cards
+          : this.state.tier3Cards;
 
     for (let i = 0; i < tierCards.length; i++) {
       if (tierCards[i].id === cardId) {
@@ -390,14 +437,20 @@ export class SplendorBotRoom extends SplendorRoom {
     this.checkNobleVisit(player);
   }
 
-  private handleBotDiscardGems(_client: Client, player: SplendorPlayerSchema, move: Record<string, unknown>): void {
+  private handleBotDiscardGems(
+    _client: Client,
+    player: SplendorPlayerSchema,
+    move: Record<string, unknown>
+  ): void {
     const gems = move.gems as Record<string, number>;
-    
+
     for (const [gem, amount] of Object.entries(gems)) {
-      const gemKey = `gem${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof SplendorPlayerSchema;
-      const bankKey = `bank${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof typeof this.state;
-      
-      if (typeof player[gemKey] === 'number' && typeof this.state[bankKey] === 'number') {
+      const gemKey =
+        `gem${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof SplendorPlayerSchema;
+      const bankKey =
+        `bank${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof typeof this.state;
+
+      if (typeof player[gemKey] === "number" && typeof this.state[bankKey] === "number") {
         (player[gemKey] as number) -= amount;
         (this.state[bankKey] as number) += amount;
       }
@@ -408,10 +461,14 @@ export class SplendorBotRoom extends SplendorRoom {
     this.checkNobleVisit(player);
   }
 
-  private handleBotSelectNoble(_client: Client, player: SplendorPlayerSchema, move: Record<string, unknown>): void {
+  private handleBotSelectNoble(
+    _client: Client,
+    player: SplendorPlayerSchema,
+    move: Record<string, unknown>
+  ): void {
     const nobleId = move.nobleId as string;
-    
-    const nobleIdx = Array.from(this.state.nobles).findIndex(n => n.id === nobleId);
+
+    const nobleIdx = Array.from(this.state.nobles).findIndex((n) => n.id === nobleId);
     if (nobleIdx >= 0) {
       const noble = this.state.nobles[nobleIdx];
       player.points += noble.points;
@@ -420,18 +477,18 @@ export class SplendorBotRoom extends SplendorRoom {
 
     this.state.phase = "take_gems";
     this.broadcast("noble_visited", { playerId: player.id, nobleId });
-    
+
     // Check win condition
     const result = this.checkWinCondition();
     if (result) {
       this.endGame(result.winner, result.isDraw);
       return;
     }
-    
+
     this.nextTurn();
   }
 
-  private payForCard(player: SplendorPlayerSchema, card: SplendorPlayerSchema['cards'][0]): void {
+  private payForCard(player: SplendorPlayerSchema, card: SplendorPlayerSchema["cards"][0]): void {
     // Get bonuses
     const bonuses: Record<string, number> = { white: 0, blue: 0, green: 0, red: 0, black: 0 };
     for (const c of player.cards) {
@@ -449,14 +506,16 @@ export class SplendorBotRoom extends SplendorRoom {
     let goldUsed = 0;
     for (const [gem, cost] of costs) {
       const effectiveCost = Math.max(0, cost - bonuses[gem]);
-      const gemKey = `gem${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof SplendorPlayerSchema;
-      const bankKey = `bank${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof typeof this.state;
-      
+      const gemKey =
+        `gem${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof SplendorPlayerSchema;
+      const bankKey =
+        `bank${gem.charAt(0).toUpperCase() + gem.slice(1)}` as keyof typeof this.state;
+
       const available = player[gemKey] as number;
       const toPay = Math.min(available, effectiveCost);
       (player[gemKey] as number) -= toPay;
       (this.state[bankKey] as number) += toPay;
-      
+
       const remaining = effectiveCost - toPay;
       if (remaining > 0) {
         goldUsed += remaining;
@@ -469,7 +528,6 @@ export class SplendorBotRoom extends SplendorRoom {
     }
   }
 
-
   private checkNobleVisit(player: SplendorPlayerSchema): void {
     // Get bonuses
     const bonuses: Record<string, number> = { white: 0, blue: 0, green: 0, red: 0, black: 0 };
@@ -478,12 +536,13 @@ export class SplendorBotRoom extends SplendorRoom {
     }
 
     // Check if player qualifies for any noble
-    const qualifiedNobles = Array.from(this.state.nobles).filter(n =>
-      bonuses.white >= n.reqWhite &&
-      bonuses.blue >= n.reqBlue &&
-      bonuses.green >= n.reqGreen &&
-      bonuses.red >= n.reqRed &&
-      bonuses.black >= n.reqBlack
+    const qualifiedNobles = Array.from(this.state.nobles).filter(
+      (n) =>
+        bonuses.white >= n.reqWhite &&
+        bonuses.blue >= n.reqBlue &&
+        bonuses.green >= n.reqGreen &&
+        bonuses.red >= n.reqRed &&
+        bonuses.black >= n.reqBlack
     );
 
     if (qualifiedNobles.length > 1) {
@@ -492,10 +551,10 @@ export class SplendorBotRoom extends SplendorRoom {
     } else if (qualifiedNobles.length === 1) {
       const noble = qualifiedNobles[0];
       player.points += noble.points;
-      const idx = Array.from(this.state.nobles).findIndex(n => n.id === noble.id);
+      const idx = Array.from(this.state.nobles).findIndex((n) => n.id === noble.id);
       if (idx >= 0) this.state.nobles.splice(idx, 1);
       this.broadcast("noble_visited", { playerId: player.id, nobleId: noble.id });
-      
+
       const result = this.checkWinCondition();
       if (result) {
         this.endGame(result.winner, result.isDraw);

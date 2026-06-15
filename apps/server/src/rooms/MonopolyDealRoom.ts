@@ -90,14 +90,61 @@ const CARD_DEFINITIONS: CardDef[] = [
   { type: "property", value: 2, name: "Water Works", count: 1, color: "utility" },
 
   // Wildcards
-  { type: "wildcard", value: 0, name: "Wild Card (Any)", count: 2, colors: ["brown", "light_blue", "pink", "orange", "red", "yellow", "green", "dark_blue", "railroad", "utility"] },
-  { type: "wildcard", value: 4, name: "Wild Green/Dark Blue", count: 1, colors: ["green", "dark_blue"] },
-  { type: "wildcard", value: 3, name: "Wild Light Blue/Brown", count: 1, colors: ["light_blue", "brown"] },
+  {
+    type: "wildcard",
+    value: 0,
+    name: "Wild Card (Any)",
+    count: 2,
+    colors: [
+      "brown",
+      "light_blue",
+      "pink",
+      "orange",
+      "red",
+      "yellow",
+      "green",
+      "dark_blue",
+      "railroad",
+      "utility",
+    ],
+  },
+  {
+    type: "wildcard",
+    value: 4,
+    name: "Wild Green/Dark Blue",
+    count: 1,
+    colors: ["green", "dark_blue"],
+  },
+  {
+    type: "wildcard",
+    value: 3,
+    name: "Wild Light Blue/Brown",
+    count: 1,
+    colors: ["light_blue", "brown"],
+  },
   { type: "wildcard", value: 2, name: "Wild Pink/Orange", count: 2, colors: ["pink", "orange"] },
   { type: "wildcard", value: 4, name: "Wild Red/Yellow", count: 2, colors: ["red", "yellow"] },
-  { type: "wildcard", value: 2, name: "Wild Railroad/Utility", count: 1, colors: ["railroad", "utility"] },
-  { type: "wildcard", value: 2, name: "Wild Railroad/Green", count: 1, colors: ["railroad", "green"] },
-  { type: "wildcard", value: 1, name: "Wild Light Blue/Railroad", count: 1, colors: ["light_blue", "railroad"] },
+  {
+    type: "wildcard",
+    value: 2,
+    name: "Wild Railroad/Utility",
+    count: 1,
+    colors: ["railroad", "utility"],
+  },
+  {
+    type: "wildcard",
+    value: 2,
+    name: "Wild Railroad/Green",
+    count: 1,
+    colors: ["railroad", "green"],
+  },
+  {
+    type: "wildcard",
+    value: 1,
+    name: "Wild Light Blue/Railroad",
+    count: 1,
+    colors: ["light_blue", "railroad"],
+  },
 
   // Action cards
   { type: "action", value: 5, name: "Deal Breaker", count: 2, actionType: "deal_breaker" },
@@ -112,19 +159,61 @@ const CARD_DEFINITIONS: CardDef[] = [
   { type: "action", value: 1, name: "Double The Rent", count: 2, actionType: "double_the_rent" },
 
   // Rent cards
-  { type: "rent", value: 1, name: "Rent (Any Color)", count: 3, colors: ["brown", "light_blue", "pink", "orange", "red", "yellow", "green", "dark_blue", "railroad", "utility"] },
-  { type: "rent", value: 1, name: "Rent (Brown/Light Blue)", count: 2, colors: ["brown", "light_blue"] },
+  {
+    type: "rent",
+    value: 1,
+    name: "Rent (Any Color)",
+    count: 3,
+    colors: [
+      "brown",
+      "light_blue",
+      "pink",
+      "orange",
+      "red",
+      "yellow",
+      "green",
+      "dark_blue",
+      "railroad",
+      "utility",
+    ],
+  },
+  {
+    type: "rent",
+    value: 1,
+    name: "Rent (Brown/Light Blue)",
+    count: 2,
+    colors: ["brown", "light_blue"],
+  },
   { type: "rent", value: 1, name: "Rent (Pink/Orange)", count: 2, colors: ["pink", "orange"] },
   { type: "rent", value: 1, name: "Rent (Red/Yellow)", count: 2, colors: ["red", "yellow"] },
-  { type: "rent", value: 1, name: "Rent (Green/Dark Blue)", count: 2, colors: ["green", "dark_blue"] },
-  { type: "rent", value: 1, name: "Rent (Railroad/Utility)", count: 2, colors: ["railroad", "utility"] },
+  {
+    type: "rent",
+    value: 1,
+    name: "Rent (Green/Dark Blue)",
+    count: 2,
+    colors: ["green", "dark_blue"],
+  },
+  {
+    type: "rent",
+    value: 1,
+    name: "Rent (Railroad/Utility)",
+    count: 2,
+    colors: ["railroad", "utility"],
+  },
 ];
 
 type ActionData =
   | { action: "draw" }
   | { action: "play_money"; cardId: string }
   | { action: "play_property"; cardId: string; targetColor?: string }
-  | { action: "play_action"; cardId: string; targetPlayerId?: string; targetCardId?: string; offerCardId?: string; targetColor?: string }
+  | {
+      action: "play_action";
+      cardId: string;
+      targetPlayerId?: string;
+      targetCardId?: string;
+      offerCardId?: string;
+      targetColor?: string;
+    }
   | { action: "pass" }
   | { action: "discard"; cardIds: string[] }
   | { action: "respond"; response: "accept" | "just_say_no"; cardId?: string }
@@ -237,7 +326,9 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.state.turnStartedAt = Date.now();
 
     // Set actions remaining for first player
-    const firstPlayer = this.state.players.get(this.state.currentTurnId) as MonopolyDealPlayerSchema;
+    const firstPlayer = this.state.players.get(
+      this.state.currentTurnId
+    ) as MonopolyDealPlayerSchema;
     firstPlayer.actionsRemaining = 3;
 
     logger.info({ roomId: this.roomId }, "Monopoly Deal game started");
@@ -301,7 +392,11 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.broadcast("cards_drawn", { playerId: client.sessionId, count: drawCount });
   }
 
-  private handlePlayMoney(client: Client, player: MonopolyDealPlayerSchema, data: { cardId: string }): void {
+  private handlePlayMoney(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    data: { cardId: string }
+  ): void {
     if (this.state.phase !== "play" || player.actionsRemaining <= 0) {
       client.send("error", { message: "Cannot play money now" });
       return;
@@ -328,7 +423,11 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.checkEndTurn(client, player);
   }
 
-  private handlePlayProperty(client: Client, player: MonopolyDealPlayerSchema, data: { cardId: string; targetColor?: string }): void {
+  private handlePlayProperty(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    data: { cardId: string; targetColor?: string }
+  ): void {
     if (this.state.phase !== "play" || player.actionsRemaining <= 0) {
       client.send("error", { message: "Cannot play property now" });
       return;
@@ -393,11 +492,25 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
 
     player.actionsRemaining--;
 
-    this.broadcast("property_played", { playerId: client.sessionId, cardId: card.id, color: targetColor });
+    this.broadcast("property_played", {
+      playerId: client.sessionId,
+      cardId: card.id,
+      color: targetColor,
+    });
     this.checkEndTurn(client, player);
   }
 
-  private handlePlayAction(client: Client, player: MonopolyDealPlayerSchema, data: { cardId: string; targetPlayerId?: string; targetCardId?: string; offerCardId?: string; targetColor?: string }): void {
+  private handlePlayAction(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    data: {
+      cardId: string;
+      targetPlayerId?: string;
+      targetCardId?: string;
+      offerCardId?: string;
+      targetColor?: string;
+    }
+  ): void {
     if (this.state.phase !== "play" || player.actionsRemaining <= 0) {
       client.send("error", { message: "Cannot play action now" });
       return;
@@ -456,7 +569,12 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     }
   }
 
-  private executePassGo(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number): void {
+  private executePassGo(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number
+  ): void {
     player.hand.splice(cardIndex, 1);
     this.state.discardPile.push(card);
     player.actionsRemaining--;
@@ -471,7 +589,13 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.checkEndTurn(client, player);
   }
 
-  private initiateDealBreaker(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number, data: { targetPlayerId?: string; targetCardId?: string }): void {
+  private initiateDealBreaker(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number,
+    data: { targetPlayerId?: string; targetCardId?: string }
+  ): void {
     if (!data.targetPlayerId) {
       client.send("error", { message: "Must specify target player" });
       return;
@@ -521,7 +645,13 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     });
   }
 
-  private initiateSlyDeal(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number, data: { targetPlayerId?: string; targetCardId?: string }): void {
+  private initiateSlyDeal(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number,
+    data: { targetPlayerId?: string; targetCardId?: string }
+  ): void {
     if (!data.targetPlayerId || !data.targetCardId) {
       client.send("error", { message: "Must specify target player and card" });
       return;
@@ -564,7 +694,11 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     actionRequest.sourcePlayerId = client.sessionId;
     actionRequest.targetPlayerId = data.targetPlayerId;
     actionRequest.cardId = card.id;
-    actionRequest.payload = JSON.stringify({ targetCardId: data.targetCardId, setIndex: foundSetIndex, cardIndex: foundCardIndex });
+    actionRequest.payload = JSON.stringify({
+      targetCardId: data.targetCardId,
+      setIndex: foundSetIndex,
+      cardIndex: foundCardIndex,
+    });
     actionRequest.status = "pending";
 
     player.hand.splice(cardIndex, 1);
@@ -582,9 +716,17 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     });
   }
 
-  private initiateForcedDeal(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number, data: { targetPlayerId?: string; targetCardId?: string; offerCardId?: string }): void {
+  private initiateForcedDeal(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number,
+    data: { targetPlayerId?: string; targetCardId?: string; offerCardId?: string }
+  ): void {
     if (!data.targetPlayerId || !data.targetCardId || !data.offerCardId) {
-      client.send("error", { message: "Must specify target player, their card, and your offer card" });
+      client.send("error", {
+        message: "Must specify target player, their card, and your offer card",
+      });
       return;
     }
 
@@ -596,7 +738,10 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     actionRequest.sourcePlayerId = client.sessionId;
     actionRequest.targetPlayerId = data.targetPlayerId;
     actionRequest.cardId = card.id;
-    actionRequest.payload = JSON.stringify({ targetCardId: data.targetCardId, offerCardId: data.offerCardId });
+    actionRequest.payload = JSON.stringify({
+      targetCardId: data.targetCardId,
+      offerCardId: data.offerCardId,
+    });
     actionRequest.status = "pending";
 
     player.hand.splice(cardIndex, 1);
@@ -614,7 +759,13 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     });
   }
 
-  private initiateDebtCollector(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number, data: { targetPlayerId?: string }): void {
+  private initiateDebtCollector(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number,
+    data: { targetPlayerId?: string }
+  ): void {
     if (!data.targetPlayerId) {
       client.send("error", { message: "Must specify target player" });
       return;
@@ -651,7 +802,12 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     });
   }
 
-  private initiateBirthday(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number): void {
+  private initiateBirthday(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number
+  ): void {
     player.hand.splice(cardIndex, 1);
     this.state.discardPile.push(card);
     player.actionsRemaining--;
@@ -669,7 +825,13 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.broadcast("birthday_played", { playerId: client.sessionId });
   }
 
-  private initiateRent(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number, data: { targetColor?: string }): void {
+  private initiateRent(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number,
+    data: { targetColor?: string }
+  ): void {
     if (!data.targetColor) {
       client.send("error", { message: "Must specify color to charge rent on" });
       return;
@@ -711,10 +873,20 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     }
 
     this.state.phase = "pay";
-    this.broadcast("rent_charged", { playerId: client.sessionId, color: data.targetColor, amount: rentAmount });
+    this.broadcast("rent_charged", {
+      playerId: client.sessionId,
+      color: data.targetColor,
+      amount: rentAmount,
+    });
   }
 
-  private executeHouse(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number, data: { targetColor?: string }): void {
+  private executeHouse(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number,
+    data: { targetColor?: string }
+  ): void {
     if (!data.targetColor) {
       client.send("error", { message: "Must specify which complete set to add house to" });
       return;
@@ -745,7 +917,13 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.checkEndTurn(client, player);
   }
 
-  private executeHotel(client: Client, player: MonopolyDealPlayerSchema, card: MonopolyDealCardSchema, cardIndex: number, data: { targetColor?: string }): void {
+  private executeHotel(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    card: MonopolyDealCardSchema,
+    cardIndex: number,
+    data: { targetColor?: string }
+  ): void {
     if (!data.targetColor) {
       client.send("error", { message: "Must specify which set with house to add hotel to" });
       return;
@@ -786,7 +964,11 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.checkEndTurn(client, player);
   }
 
-  private handleDiscard(client: Client, player: MonopolyDealPlayerSchema, data: { cardIds: string[] }): void {
+  private handleDiscard(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    data: { cardIds: string[] }
+  ): void {
     if (this.state.phase !== "discard") {
       client.send("error", { message: "Not in discard phase" });
       return;
@@ -802,7 +984,7 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     }
 
     for (const cardId of data.cardIds) {
-      const idx = Array.from(player.hand).findIndex(c => c.id === cardId);
+      const idx = Array.from(player.hand).findIndex((c) => c.id === cardId);
       if (idx !== -1) {
         const card = player.hand[idx];
         player.hand.splice(idx, 1);
@@ -814,7 +996,11 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.endTurn(client.sessionId);
   }
 
-  private handleRespond(client: Client, player: MonopolyDealPlayerSchema, data: { response: "accept" | "just_say_no"; cardId?: string }): void {
+  private handleRespond(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    data: { response: "accept" | "just_say_no"; cardId?: string }
+  ): void {
     if (this.state.phase !== "respond" || this.state.activeResponderId !== client.sessionId) {
       client.send("error", { message: "Not your turn to respond" });
       return;
@@ -828,7 +1014,7 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
 
     if (data.response === "just_say_no") {
       // Check player has Just Say No card
-      const jsnIndex = Array.from(player.hand).findIndex(c => c.actionType === "just_say_no");
+      const jsnIndex = Array.from(player.hand).findIndex((c) => c.actionType === "just_say_no");
       if (jsnIndex === -1) {
         client.send("error", { message: "You don't have a Just Say No card" });
         return;
@@ -860,7 +1046,11 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     }
   }
 
-  private handlePay(client: Client, player: MonopolyDealPlayerSchema, data: { cardIds: string[] }): void {
+  private handlePay(
+    client: Client,
+    player: MonopolyDealPlayerSchema,
+    data: { cardIds: string[] }
+  ): void {
     if (player.amountOwed <= 0) {
       client.send("error", { message: "You don't owe anything" });
       return;
@@ -868,11 +1058,16 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
 
     // Calculate total value of payment
     let totalValue = 0;
-    const cardsToMove: { card: MonopolyDealCardSchema; source: "bank" | "property"; setIndex?: number; cardIndex?: number }[] = [];
+    const cardsToMove: {
+      card: MonopolyDealCardSchema;
+      source: "bank" | "property";
+      setIndex?: number;
+      cardIndex?: number;
+    }[] = [];
 
     for (const cardId of data.cardIds) {
       // Check bank first
-      const bankIdx = Array.from(player.bank).findIndex(c => c.id === cardId);
+      const bankIdx = Array.from(player.bank).findIndex((c) => c.id === cardId);
       if (bankIdx !== -1) {
         totalValue += player.bank[bankIdx].value;
         cardsToMove.push({ card: player.bank[bankIdx], source: "bank" });
@@ -885,7 +1080,12 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
         for (let ci = 0; ci < set.cards.length; ci++) {
           if (set.cards[ci].id === cardId) {
             totalValue += set.cards[ci].value;
-            cardsToMove.push({ card: set.cards[ci], source: "property", setIndex: si, cardIndex: ci });
+            cardsToMove.push({
+              card: set.cards[ci],
+              source: "property",
+              setIndex: si,
+              cardIndex: ci,
+            });
             break;
           }
         }
@@ -902,16 +1102,18 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
 
     for (const item of cardsToMove) {
       if (item.source === "bank") {
-        const idx = Array.from(player.bank).findIndex(c => c.id === item.card.id);
+        const idx = Array.from(player.bank).findIndex((c) => c.id === item.card.id);
         if (idx !== -1) player.bank.splice(idx, 1);
         creditor.bank.push(item.card);
       } else if (item.source === "property" && item.setIndex !== undefined) {
         const set = player.propertySets[item.setIndex];
-        const idx = Array.from(set.cards).findIndex(c => c.id === item.card.id);
+        const idx = Array.from(set.cards).findIndex((c) => c.id === item.card.id);
         if (idx !== -1) set.cards.splice(idx, 1);
-        
+
         // Add to creditor's properties
-        let creditorSet = Array.from(creditor.propertySets).find(ps => ps.color === item.card.color);
+        let creditorSet = Array.from(creditor.propertySets).find(
+          (ps) => ps.color === item.card.color
+        );
         if (!creditorSet) {
           creditorSet = new MonopolyDealPropertySetSchema();
           creditorSet.color = item.card.color;
@@ -929,50 +1131,55 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.updateCompleteSets(player);
     this.updateCompleteSets(creditor);
 
-    this.broadcast("payment_made", { 
-      fromPlayerId: client.sessionId, 
-      toPlayerId: creditor.id, 
-      amount: totalValue 
+    this.broadcast("payment_made", {
+      fromPlayerId: client.sessionId,
+      toPlayerId: creditor.id,
+      amount: totalValue,
     });
 
     // Check if all debts are paid
     const anyDebtRemaining = Array.from(this.state.players.values()).some(
-      p => (p as MonopolyDealPlayerSchema).amountOwed > 0
+      (p) => (p as MonopolyDealPlayerSchema).amountOwed > 0
     );
 
     if (!anyDebtRemaining) {
-      const currentPlayer = this.state.players.get(this.state.currentTurnId) as MonopolyDealPlayerSchema;
-      this.checkEndTurn(this.clients.find(c => c.sessionId === this.state.currentTurnId)!, currentPlayer);
+      const currentPlayer = this.state.players.get(
+        this.state.currentTurnId
+      ) as MonopolyDealPlayerSchema;
+      this.checkEndTurn(
+        this.clients.find((c) => c.sessionId === this.state.currentTurnId)!,
+        currentPlayer
+      );
     }
   }
 
   private resolveActionStack(): void {
-    // Resolve actions from top to bottom (LIFO)
-    while (this.state.actionStack.length > 0) {
-      const action = this.state.actionStack[this.state.actionStack.length - 1];
+    // Snapshot the full stack before any pops so cancellation context isn't lost.
+    // Process newest-to-oldest (top → bottom): each JSN toggles the cancelled flag;
+    // non-JSN actions execute only when the net cancellation count is even (0, 2, 4…).
+    const fullStack = Array.from(this.state.actionStack);
+    let cancelled = false;
 
-      // Check if this action is countered by a Just Say No above it
-      let isCancelled = false;
-      for (let i = this.state.actionStack.length - 1; i >= 0; i--) {
-        const a = this.state.actionStack[i];
-        if (a.actionType === "just_say_no" && a.targetPlayerId === action.sourcePlayerId) {
-          // This action is cancelled
-          isCancelled = !isCancelled;
-        }
-      }
-
-      if (!isCancelled && action.actionType !== "just_say_no") {
+    for (let i = fullStack.length - 1; i >= 0; i--) {
+      const action = fullStack[i];
+      if (action.actionType === "just_say_no") {
+        cancelled = !cancelled;
+      } else if (!cancelled) {
         this.executeAction(action);
       }
+    }
 
+    while (this.state.actionStack.length > 0) {
       this.state.actionStack.pop();
     }
 
     this.state.activeResponderId = "";
 
     // Return to play phase or check for turn end
-    const currentPlayer = this.state.players.get(this.state.currentTurnId) as MonopolyDealPlayerSchema;
-    const currentClient = this.clients.find(c => c.sessionId === this.state.currentTurnId);
+    const currentPlayer = this.state.players.get(
+      this.state.currentTurnId
+    ) as MonopolyDealPlayerSchema;
+    const currentClient = this.clients.find((c) => c.sessionId === this.state.currentTurnId);
     if (currentClient) {
       this.state.phase = "play";
       this.checkEndTurn(currentClient, currentPlayer);
@@ -990,7 +1197,9 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     switch (action.actionType) {
       case "deal_breaker": {
         const targetColor = payload.targetSetColor;
-        const setIndex = Array.from(targetPlayer.propertySets).findIndex(ps => ps.color === targetColor && ps.isComplete);
+        const setIndex = Array.from(targetPlayer.propertySets).findIndex(
+          (ps) => ps.color === targetColor && ps.isComplete
+        );
         if (setIndex !== -1) {
           const stolenSet = targetPlayer.propertySets[setIndex];
           targetPlayer.propertySets.splice(setIndex, 1);
@@ -1020,7 +1229,9 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
             set.cards.splice(cardIndex, 1);
 
             // Add to source player's properties
-            let destSet = Array.from(sourcePlayer.propertySets).find(ps => ps.color === stolenCard.color);
+            let destSet = Array.from(sourcePlayer.propertySets).find(
+              (ps) => ps.color === stolenCard.color
+            );
             if (!destSet) {
               destSet = new MonopolyDealPropertySetSchema();
               destSet.color = stolenCard.color;
@@ -1082,7 +1293,10 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     if (player.actionsRemaining <= 0 || this.state.phase === "play") {
       if (player.hand.length > 7) {
         this.state.phase = "discard";
-        this.broadcast("must_discard", { playerId: client.sessionId, count: player.hand.length - 7 });
+        this.broadcast("must_discard", {
+          playerId: client.sessionId,
+          count: player.hand.length - 7,
+        });
       } else if (player.actionsRemaining <= 0) {
         this.endTurn(client.sessionId);
       }
