@@ -7,11 +7,10 @@ services:
   - type: web
     name: multiplayer-games-backend
     runtime: node
-    region: oregon # Choose: oregon, frankfurt, singapore, ohio
+    region: singapore # Choose: oregon, frankfurt, singapore, ohio
     plan: free
-    rootDir: apps/server
-    buildCommand: npm install && npm run build
-    startCommand: npm start
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @multiplayer/server build
+    startCommand: node apps/server/dist/index.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -66,9 +65,8 @@ services:
     runtime: static
     region: oregon # Should match backend region
     plan: free
-    rootDir: apps/web
-    buildCommand: npm install && npm run build
-    staticPublishPath: out # Or .next if using standalone output
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @multiplayer/web build
+    staticPublishPath: apps/web/out # Next.js static export output
     headers:
       - path: /*
         name: X-Frame-Options
