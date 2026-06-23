@@ -146,5 +146,62 @@
     @apply bg-surface-900/60 backdrop-blur-md;
     @apply border border-surface-700/50;
   }
+
+  /* RPS countdown pop animation */
+  .rps-countdown-digit {
+    display: inline-block;
+    animation: rpsCountdownPop 0.7s ease-out forwards;
+    will-change: transform, opacity;
+  }
+
+  /* Blackjack CSS card flip */
+  .bj-card-wrapper {
+    perspective: 700px;
+  }
+
+  .bj-card-inner {
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.45s ease;
+  }
+
+  .bj-card-inner.is-face-up {
+    transform: rotateY(0deg);
+  }
+
+  .bj-card-inner.is-face-down {
+    transform: rotateY(180deg);
+  }
+
+  .bj-card-front,
+  .bj-card-back {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  .bj-card-back {
+    transform: rotateY(180deg);
+  }
+}
+
+@keyframes rpsCountdownPop {
+  0% {
+    opacity: 0;
+    transform: scale(2.5);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  75% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
 }
 

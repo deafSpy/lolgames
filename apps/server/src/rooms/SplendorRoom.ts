@@ -280,7 +280,7 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
       "Player joined Splendor"
     );
 
-    if (this.clients.length >= this.maxClients) {
+    if (this.clients.length >= this.maxPlayers) {
       this.lock();
     }
   }

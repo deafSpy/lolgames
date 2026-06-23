@@ -1,7 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RPSChoice } from "@multiplayer/shared";
 
 interface RPSGameProps {
@@ -21,14 +20,16 @@ interface RPSGameProps {
   disabled?: boolean;
   turnStartedAt?: number;
   turnTimeLimit?: number;
-  players?: Map<string, any>;
+  players?: Map<string, { id: string; displayName?: string }>;
 }
 
-const choices: { value: RPSChoice; emoji: string; label: string }[] = [
+const CHOICES: { value: RPSChoice; emoji: string; label: string }[] = [
   { value: RPSChoice.ROCK, emoji: "✊", label: "Rock" },
   { value: RPSChoice.PAPER, emoji: "✋", label: "Paper" },
   { value: RPSChoice.SCISSORS, emoji: "✌️", label: "Scissors" },
 ];
+
+type CountdownStep = 3 | 2 | 1 | "GO" | null;
 
 export function RPSGame({
   roundNumber,
@@ -50,6 +51,10 @@ export function RPSGame({
   players,
 }: RPSGameProps) {
   const [timeRemaining, setTimeRemaining] = useState<number>(turnTimeLimit);
+  const [countdownStep, setCountdownStep] = useState<CountdownStep>(null);
+  const [handsVisible, setHandsVisible] = useState(false);
+  const timerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const prevPhaseRef = useRef<string>("");
 
   const isPlayer1 = playerId === player1Id;
   const myScore = isPlayer1 ? player1Score : player2Score;
@@ -59,200 +64,290 @@ export function RPSGame({
   const myChoice = isPlayer1 ? player1Choice : player2Choice;
   const opponentChoice = isPlayer1 ? player2Choice : player1Choice;
 
-  // Get opponent name from players map
-  const opponentId = isPlayer1
-    ? players?.get(player1Id)?.id === playerId
-      ? Array.from(players.keys()).find((id) => id !== playerId)
-      : undefined
-    : player1Id;
-  const opponentPlayer = players?.get(
-    opponentId ||
-      (isPlayer1 ? Array.from(players?.keys() || []).find((id) => id !== playerId) : player1Id) ||
-      ""
-  );
-  const opponentName = opponentPlayer?.displayName || "Opponent";
+  const opponentId = Array.from(players?.keys() ?? []).find((id) => id !== playerId);
+  const opponentName = players?.get(opponentId ?? "")?.displayName ?? "Opponent";
 
-  // Timer effect
+  // Kick off countdown when phase first transitions to "reveal"
+  useEffect(() => {
+    const entering = phase === "reveal" && prevPhaseRef.current !== "reveal";
+
+    if (entering) {
+      setHandsVisible(false);
+      timerRefs.current.forEach(clearTimeout);
+      timerRefs.current = [];
+
+      setCountdownStep(3);
+      timerRefs.current.push(setTimeout(() => setCountdownStep(2), 800));
+      timerRefs.current.push(setTimeout(() => setCountdownStep(1), 1600));
+      timerRefs.current.push(setTimeout(() => setCountdownStep("GO"), 2400));
+      timerRefs.current.push(
+        setTimeout(() => {
+          setCountdownStep(null);
+          setHandsVisible(true);
+        }, 3100)
+      );
+    }
+
+    if (phase !== "reveal" && phase !== "result") {
+      setHandsVisible(false);
+      setCountdownStep(null);
+    }
+
+    if (phase === "result") {
+      setHandsVisible(true);
+    }
+
+    prevPhaseRef.current = phase;
+
+    return () => timerRefs.current.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // Turn timer
   useEffect(() => {
     if (!turnStartedAt || disabled || phase !== "commit") {
       setTimeRemaining(turnTimeLimit);
       return;
     }
-
-    const updateTimer = () => {
+    const update = () => {
       const elapsed = Date.now() - turnStartedAt;
-      const remaining = Math.max(0, turnTimeLimit - elapsed);
-      setTimeRemaining(remaining);
+      setTimeRemaining(Math.max(0, turnTimeLimit - elapsed));
     };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 100);
-    return () => clearInterval(interval);
+    update();
+    const id = setInterval(update, 100);
+    return () => clearInterval(id);
   }, [turnStartedAt, turnTimeLimit, disabled, phase]);
 
-  const formatTime = (ms: number): string => {
-    const seconds = Math.ceil(ms / 1000);
-    return `${seconds}s`;
-  };
+  const isTimeLow = timeRemaining <= 3000;
 
-  const isTimeLow = timeRemaining <= 3000; // Last 3 seconds for RPS
-
-  const getRoundResult = () => {
+  const roundResult = (): "win" | "lose" | "draw" => {
     if (!roundWinnerId) return "draw";
     return roundWinnerId === playerId ? "win" : "lose";
   };
 
-  const renderWinCircles = (score: number, isPlayer1: boolean) => {
-    return Array.from({ length: targetScore }, (_, i) => (
+  const renderScoreDots = (score: number, isMe: boolean) =>
+    Array.from({ length: targetScore }, (_, i) => (
       <div
         key={i}
-        className={`w-4 h-4 rounded-full border-2 transition-colors ${
+        className={`w-4 h-4 rounded-full border-2 transition-all duration-300 ${
           i < score
-            ? isPlayer1
-              ? "bg-success border-success shadow-lg shadow-success/50"
-              : "bg-error border-error shadow-lg shadow-error/50"
+            ? isMe
+              ? "bg-primary-400 border-primary-400 shadow-[0_0_8px_rgba(37,166,180,0.6)]"
+              : "bg-error border-error shadow-[0_0_8px_rgba(239,68,68,0.6)]"
             : "border-surface-600 bg-surface-800"
         }`}
       />
     ));
-  };
+
+  const choiceEmoji = (c: string) => CHOICES.find((ch) => ch.value === c)?.emoji ?? "❓";
 
   return (
-    <div className="flex flex-col items-center max-w-2xl mx-auto">
-      {/* Score */}
-      <div className="mb-10 text-center">
-        <div className="text-surface-400 text-lg mb-3">Round {roundNumber}</div>
-        <div className="flex items-center gap-8">
+    <div className="flex flex-col items-center w-full max-w-lg mx-auto px-4 select-none">
+      {/* ── Score / Best-of indicator ─────────────────────────── */}
+      <div className="mb-8 text-center w-full">
+        <p className="text-surface-500 text-xs uppercase tracking-wider mb-3">
+          Round {roundNumber} · Best of {targetScore * 2 - 1}
+        </p>
+        <div className="flex items-center justify-center gap-6 sm:gap-12">
+          {/* My score */}
           <div className="text-center">
-            <div className="flex gap-2 justify-center mb-2">{renderWinCircles(myScore, true)}</div>
-            <div className="text-sm text-surface-400">You</div>
+            <div className="flex gap-1.5 justify-center mb-2">{renderScoreDots(myScore, true)}</div>
+            <div className="text-xs text-surface-400 font-medium">You</div>
+            <div className="text-2xl font-black text-primary-400 mt-1">{myScore}</div>
           </div>
-          <div className="text-surface-500 text-2xl">vs</div>
+
+          <div className="text-surface-600 text-xl font-bold">vs</div>
+
+          {/* Opponent score */}
           <div className="text-center">
-            <div className="flex gap-2 justify-center mb-2">
-              {renderWinCircles(opponentScore, false)}
+            <div className="flex gap-1.5 justify-center mb-2">
+              {renderScoreDots(opponentScore, false)}
             </div>
-            <div className="text-sm text-surface-400">{opponentName}</div>
+            <div className="text-xs text-surface-400 font-medium truncate max-w-[80px] sm:max-w-none">
+              {opponentName}
+            </div>
+            <div className="text-2xl font-black text-error mt-1">{opponentScore}</div>
           </div>
         </div>
       </div>
 
-      {/* Timer (shown during commit phase) */}
+      {/* ── Turn timer (commit phase only) ────────────────────── */}
       {phase === "commit" && !disabled && turnStartedAt > 0 && (
-        <div className="mb-6">
+        <div className="mb-5">
           <span
-            className={`font-mono text-2xl font-bold px-4 py-2 rounded-xl transition-colors ${
+            className={`font-mono text-2xl font-bold px-4 py-2 rounded-xl transition-all duration-300 ${
               isTimeLow
                 ? "bg-red-500/20 text-red-400 animate-pulse"
                 : "bg-surface-700 text-surface-300"
             }`}
           >
-            {formatTime(timeRemaining)}
+            {Math.ceil(timeRemaining / 1000)}s
           </span>
         </div>
       )}
 
-      {/* Phase indicator */}
-      <div className="mb-8 text-center text-lg">
+      {/* ── Phase status text ─────────────────────────────────── */}
+      <div className="mb-6 text-center min-h-[28px]">
         {disabled ? (
-          <span className="text-surface-400">Waiting for opponent...</span>
+          <span className="text-surface-400">Waiting for opponent…</span>
         ) : phase === "commit" ? (
           myCommitted ? (
-            <span className="text-primary-400">Waiting for opponent to choose...</span>
+            <span className="text-primary-400">Waiting for opponent to choose…</span>
           ) : (
-            <span className="text-success font-medium">Make your choice!</span>
+            <span className="text-success font-semibold animate-pulse">Make your choice!</span>
           )
-        ) : phase === "reveal" ? (
-          <span className="text-accent-400 font-medium text-xl">Revealing...</span>
-        ) : (
-          <span
-            className={`font-medium text-xl ${
-              getRoundResult() === "win"
+        ) : phase === "reveal" && countdownStep !== null ? (
+          <span className="text-accent-400 font-semibold">Get ready…</span>
+        ) : null}
+      </div>
+
+      {/* ── Hand reveal area + countdown overlay ──────────────── */}
+      <div className="relative mb-10 w-full">
+        {/* Countdown overlay */}
+        {phase === "reveal" && countdownStep !== null && (
+          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+            <span
+              key={String(countdownStep)}
+              className="rps-countdown-digit font-black leading-none"
+              style={{
+                fontSize: "clamp(4rem, 20vw, 7rem)",
+                color: countdownStep === "GO" ? "#22c55e" : "#ffffff",
+                textShadow:
+                  countdownStep === "GO"
+                    ? "0 0 40px rgba(34,197,94,0.8)"
+                    : "0 0 40px rgba(255,255,255,0.5)",
+              }}
+            >
+              {countdownStep === "GO" ? "GO!" : countdownStep}
+            </span>
+          </div>
+        )}
+
+        {/* VS display — hands */}
+        <div
+          className={`flex items-center justify-center gap-8 sm:gap-16 transition-opacity duration-300 ${
+            phase === "reveal" && countdownStep !== null ? "opacity-20" : "opacity-100"
+          }`}
+        >
+          {/* My hand */}
+          <div className="text-center">
+            <div
+              className={`w-28 h-28 sm:w-36 sm:h-36 rounded-3xl flex items-center justify-center border-2 transition-all duration-300 ${
+                handsVisible && myChoice
+                  ? "bg-primary-500/20 border-primary-500/60 shadow-[0_0_20px_rgba(37,166,180,0.3)]"
+                  : myCommitted
+                    ? "bg-success/10 border-success/40"
+                    : "bg-surface-800 border-surface-700"
+              }`}
+            >
+              {handsVisible && myChoice ? (
+                <span className="text-6xl sm:text-7xl animate-scale-in">
+                  {choiceEmoji(myChoice)}
+                </span>
+              ) : myCommitted ? (
+                <span className="text-4xl text-success">✓</span>
+              ) : (
+                <span className="text-5xl text-surface-600">?</span>
+              )}
+            </div>
+            <p className="text-sm text-surface-400 mt-3 font-medium">You</p>
+          </div>
+
+          {/* VS divider */}
+          <div className="text-surface-500 text-2xl sm:text-3xl font-black">VS</div>
+
+          {/* Opponent hand */}
+          <div className="text-center">
+            <div
+              className={`w-28 h-28 sm:w-36 sm:h-36 rounded-3xl flex items-center justify-center border-2 transition-all duration-300 ${
+                handsVisible && opponentChoice
+                  ? "bg-error/20 border-error/60 shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+                  : opponentCommitted
+                    ? "bg-success/10 border-success/40"
+                    : "bg-surface-800 border-surface-700"
+              }`}
+            >
+              {handsVisible && opponentChoice ? (
+                <span
+                  className="text-6xl sm:text-7xl animate-scale-in"
+                  style={{ animationDelay: "100ms", animationFillMode: "both" }}
+                >
+                  {choiceEmoji(opponentChoice)}
+                </span>
+              ) : opponentCommitted ? (
+                <span className="text-4xl text-success">✓</span>
+              ) : (
+                <span className="text-5xl text-surface-600">?</span>
+              )}
+            </div>
+            <p className="text-sm text-surface-400 mt-3 font-medium truncate max-w-[120px] sm:max-w-none">
+              {opponentName}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Result screen (phase === "result") ────────────────── */}
+      {phase === "result" && (
+        <div className="mb-8 text-center animate-scale-in">
+          {/* Result icon + label */}
+          <div className="text-5xl sm:text-6xl mb-2">
+            {roundResult() === "win" ? "🎉" : roundResult() === "lose" ? "💔" : "🤝"}
+          </div>
+          <div
+            className={`text-2xl sm:text-3xl font-black mb-4 ${
+              roundResult() === "win"
                 ? "text-success"
-                : getRoundResult() === "lose"
+                : roundResult() === "lose"
                   ? "text-error"
                   : "text-surface-300"
             }`}
           >
-            {getRoundResult() === "win"
-              ? "🎉 You won this round!"
-              : getRoundResult() === "lose"
-                ? "You lost this round"
-                : "It's a draw!"}
-          </span>
-        )}
-      </div>
-
-      {/* Choices area - BIGGER */}
-      <div className="flex items-center gap-16 mb-12">
-        {/* My choice */}
-        <div className="text-center">
-          <div className="w-36 h-36 rounded-3xl bg-surface-800 flex items-center justify-center mb-4 border-2 border-surface-700">
-            {phase === "reveal" || phase === "result" ? (
-              <motion.span
-                initial={{ scale: 0, rotate: -180 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                className="text-7xl"
-              >
-                {choices.find((c) => c.value === myChoice)?.emoji || "❓"}
-              </motion.span>
-            ) : myCommitted ? (
-              <span className="text-5xl text-success">✓</span>
-            ) : (
-              <span className="text-5xl text-surface-600">?</span>
-            )}
+            {roundResult() === "win"
+              ? "Round Won!"
+              : roundResult() === "lose"
+                ? "Round Lost"
+                : "Draw!"}
           </div>
-          <div className="text-sm text-surface-400">You</div>
-        </div>
-
-        {/* VS */}
-        <div className="text-surface-500 text-3xl font-bold">VS</div>
-
-        {/* Opponent choice */}
-        <div className="text-center">
-          <div className="w-36 h-36 rounded-3xl bg-surface-800 flex items-center justify-center mb-4 border-2 border-surface-700">
-            {phase === "reveal" || phase === "result" ? (
-              <motion.span
-                initial={{ scale: 0, rotate: 180 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                className="text-7xl"
-              >
-                {choices.find((c) => c.value === opponentChoice)?.emoji || "❓"}
-              </motion.span>
-            ) : opponentCommitted ? (
-              <span className="text-5xl text-success">✓</span>
-            ) : (
-              <span className="text-5xl text-surface-600">?</span>
-            )}
+          {/* Score summary */}
+          <div className="flex items-center justify-center gap-3 text-sm text-surface-400">
+            <div className="flex gap-1.5">{renderScoreDots(myScore, true)}</div>
+            <span className="font-bold text-surface-300">
+              {myScore} – {opponentScore}
+            </span>
+            <div className="flex gap-1.5">{renderScoreDots(opponentScore, false)}</div>
           </div>
-          <div className="text-sm text-surface-400">{opponentName}</div>
         </div>
-      </div>
+      )}
 
-      {/* Choice buttons - BIGGER */}
+      {/* ── Choice buttons (commit phase, not yet committed) ──── */}
       {phase === "commit" && !myCommitted && !disabled && (
-        <div className="flex gap-6">
-          {choices.map((choice) => (
-            <motion.button
+        <div className="flex gap-4 sm:gap-6 flex-wrap justify-center">
+          {CHOICES.map((choice) => (
+            <button
               key={choice.value}
-              whileHover={{ scale: 1.08, y: -4 }}
-              whileTap={{ scale: 0.95 }}
               onClick={() => onChoice(choice.value)}
-              className="w-28 h-28 rounded-2xl bg-surface-800 hover:bg-surface-700 transition-colors flex flex-col items-center justify-center gap-2 border-2 border-surface-700 hover:border-primary-500"
+              className={[
+                "w-24 h-24 sm:w-28 sm:h-28 rounded-2xl flex flex-col items-center justify-center gap-2",
+                "bg-surface-800 border-2 border-surface-700",
+                "hover:bg-surface-700 hover:border-primary-500 hover:scale-105 hover:-translate-y-1",
+                "active:scale-95",
+                "transition-all duration-150",
+                "focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-surface-950",
+                "cursor-pointer",
+              ].join(" ")}
             >
-              <span className="text-5xl">{choice.emoji}</span>
-              <span className="text-sm text-surface-400">{choice.label}</span>
-            </motion.button>
+              <span className="text-4xl sm:text-5xl">{choice.emoji}</span>
+              <span className="text-xs text-surface-400 font-medium">{choice.label}</span>
+            </button>
           ))}
         </div>
       )}
 
-      {/* Committed indicator */}
+      {/* ── Committed: waiting for partner ────────────────────── */}
       {phase === "commit" && myCommitted && (
-        <div className="text-center text-surface-400 text-lg">
-          <div className="animate-pulse">Waiting for opponent...</div>
+        <div className="text-center text-surface-400 animate-pulse text-base">
+          Waiting for opponent…
         </div>
       )}
     </div>

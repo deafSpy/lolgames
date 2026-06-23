@@ -28,7 +28,7 @@ loadEnv({ path: resolve(__dirname, "..", ".env") });
 export const config = {
   // Server
   // On Render, PORT is automatically injected and should not be overridden
-  port: parseInt(process.env.PORT || "3001", 10),
+  port: parseInt(process.env.PORT || "3002", 10),
   host: process.env.HOST || "0.0.0.0",
   nodeEnv,
 
@@ -36,7 +36,7 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN || (nodeEnv === "production" ? "" : "*"),
 
   // Backend URL for OAuth callbacks
-  backendUrl: process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`,
+  backendUrl: process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3002}`,
 
   // Redis (optional, for scaling and persistence)
   redis: {

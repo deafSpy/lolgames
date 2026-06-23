@@ -15,9 +15,15 @@ interface Position {
   y: number;
 }
 
-export class QuoridorRoom extends BaseRoom<QuoridorState> {
-  maxClients = 2;
+// Starting positions indexed by join order (supports 2p and 4p)
+const QUORIDOR_STARTS: Array<{ x: number; y: number; goalRow: number }> = [
+  { x: 4, y: 8, goalRow: 0 }, // south → north
+  { x: 4, y: 0, goalRow: 8 }, // north → south
+  { x: 0, y: 4, goalRow: 8 }, // west → east (uses goalRow as goalCol semantically)
+  { x: 8, y: 4, goalRow: 0 }, // east → west
+];
 
+export class QuoridorRoom extends BaseRoom<QuoridorState> {
   initializeGame(): void {
     this.setState(new QuoridorState());
     this.state.status = "waiting";
@@ -34,17 +40,10 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
     player.wallsRemaining = 10;
 
     const playerCount = this.state.players.size;
-    if (playerCount === 0) {
-      // Player 1 starts at bottom (row 8), needs to reach top (row 0)
-      player.x = 4;
-      player.y = 8;
-      player.goalRow = 0;
-    } else {
-      // Player 2 starts at top (row 0), needs to reach bottom (row 8)
-      player.x = 4;
-      player.y = 0;
-      player.goalRow = 8;
-    }
+    const start = QUORIDOR_STARTS[Math.min(playerCount, QUORIDOR_STARTS.length - 1)];
+    player.x = start.x;
+    player.y = start.y;
+    player.goalRow = start.goalRow;
 
     this.state.players.set(client.sessionId, player);
 
@@ -53,7 +52,7 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
       "Player joined Quoridor"
     );
 
-    if (this.clients.length >= this.maxClients) {
+    if (this.clients.length >= this.maxPlayers) {
       this.lock();
     }
   }

@@ -7,11 +7,10 @@ const nextConfig = {
     return [
       {
         source: "/api/game/:path*",
-        destination: `${process.env.NEXT_PUBLIC_GAME_SERVER_URL || "http://localhost:3001"}/:path*`,
+        destination: `${process.env.NEXT_PUBLIC_GAME_SERVER_URL || "http://localhost:3002"}/:path*`,
       },
     ];
   },
 };
 
 module.exports = nextConfig;
-

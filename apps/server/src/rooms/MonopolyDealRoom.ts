@@ -303,7 +303,7 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
       "Player joined Monopoly Deal"
     );
 
-    if (this.clients.length >= this.maxClients) {
+    if (this.clients.length >= this.maxPlayers) {
       this.lock();
     }
   }

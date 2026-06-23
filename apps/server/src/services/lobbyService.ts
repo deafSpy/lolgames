@@ -27,6 +27,7 @@ interface LobbyData {
   hostUserId?: string;
   currentPlayers: number;
   maxPlayers: number;
+  spectatorCount: number;
   status: "waiting" | "starting" | "in-progress";
   vsBot: boolean;
   createdAt: string;
@@ -89,6 +90,7 @@ class LobbyService {
       hostUserId,
       currentPlayers: 1,
       maxPlayers,
+      spectatorCount: 0,
       status: "waiting",
       vsBot,
       createdAt: new Date().toISOString(),
@@ -299,6 +301,34 @@ class LobbyService {
         currentPlayers: newPlayerCount,
       });
     }
+  }
+
+  /**
+   * Increment spectator count when a spectator joins
+   */
+  async spectatorJoined(roomId: string): Promise<void> {
+    const lobby = await this.getLobby(roomId);
+    if (!lobby) {
+      return;
+    }
+
+    await this.updateLobby(roomId, {
+      spectatorCount: (lobby.spectatorCount ?? 0) + 1,
+    });
+  }
+
+  /**
+   * Decrement spectator count when a spectator leaves
+   */
+  async spectatorLeft(roomId: string): Promise<void> {
+    const lobby = await this.getLobby(roomId);
+    if (!lobby) {
+      return;
+    }
+
+    await this.updateLobby(roomId, {
+      spectatorCount: Math.max(0, (lobby.spectatorCount ?? 0) - 1),
+    });
   }
 
   /**

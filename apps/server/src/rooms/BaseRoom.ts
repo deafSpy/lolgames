@@ -29,7 +29,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   protected playerIdentities: Map<string, ParticipantIdentity> = new Map();
   protected roomSlug: string = ""; // Human-readable room code (e.g., "swift-blue-fox")
   protected hostSessionId: string = ""; // Track the host for kick/bot management
-  protected maxPlayers: number = 2; // Authoritative seat count; set from onCreate options
+  maxPlayers: number = 2; // Authoritative seat count; set from onCreate options
 
   protected registerBotIdentity(botId: string, displayName: string): void {
     this.playerIdentities.set(botId, {
@@ -56,7 +56,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
 
     // Set room metadata
     this.setMetadata({
-      gameType: this.roomName,
+      gameType: (this.roomName?.replace("_bot", "") as GameType) || GameType.CONNECT4,
       hostName: options.hostName || "Unknown",
       createdAt,
       vsBot,
@@ -68,7 +68,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     lobbyService
       .createLobby({
         roomId: this.roomId,
-        gameType: this.roomName as GameType,
+        gameType: (this.roomName?.replace("_bot", "") as GameType) || GameType.CONNECT4,
         host: options.hostName || "Unknown",
         hostUserId: options.userId,
         maxPlayers: this.maxPlayers,
@@ -221,12 +221,24 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         "Player joined"
       );
 
-      // Update lobby player count in Redis (if not spectator)
+      // Update lobby in Redis: player count for real players, spectator count for spectators
       if (!player.isSpectator) {
         lobbyService.playerJoined(this.roomId).catch((err) => {
           logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
         });
+      } else {
+        lobbyService.spectatorJoined(this.roomId).catch((err) => {
+          logger.warn(
+            { error: err, roomId: this.roomId },
+            "Failed to update spectator count in Redis"
+          );
+        });
       }
+    }
+
+    // Send room metadata to the joining client so it knows the human-readable slug
+    if (this.roomSlug) {
+      client.send("room_info", { roomSlug: this.roomSlug });
     }
 
     // Room now persists since someone joined it
@@ -272,7 +284,14 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     // Spectators or pre-game disconnects: just drop the player; don't hold the seat.
     if (player.isSpectator || this.state.status !== "in_progress") {
       this.state.players.delete(client.sessionId);
-      if (!player.isSpectator && this.state.status === "waiting") {
+      if (player.isSpectator) {
+        lobbyService.spectatorLeft(this.roomId).catch((err) => {
+          logger.warn(
+            { error: err, roomId: this.roomId },
+            "Failed to update spectator count in Redis"
+          );
+        });
+      } else if (this.state.status === "waiting") {
         lobbyService.playerLeft(this.roomId).catch((err) => {
           logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
         });
@@ -398,6 +417,13 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   }
 
   protected async handleMoveMessage(client: Client, data: unknown): Promise<void> {
+    // Reject moves from spectators with a clear error
+    const movingPlayer = this.state.players.get(client.sessionId);
+    if (movingPlayer?.isSpectator) {
+      client.send("error", { message: "Spectators cannot make moves" });
+      return;
+    }
+
     // Validate it's the player's turn
     if (this.state.status !== "in_progress") {
       client.send("error", { message: "Game is not in progress" });
@@ -455,8 +481,8 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   protected checkStartGame(): void {
     if (this.state.status !== "waiting") return;
 
-    // Need at least 2 players ready
-    if (this.clients.length < 2) return;
+    // Need all seats filled before the game can start
+    if (this.clients.length < this.maxPlayers) return;
 
     const allReady = Array.from(this.state.players.values()).every((p) => p.isReady);
     logger.info(
