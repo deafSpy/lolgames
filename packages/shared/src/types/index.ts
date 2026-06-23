@@ -48,9 +48,11 @@ export interface LobbyRoom {
   hostName: string;
   playerCount: number;
   maxPlayers: number;
+  spectatorCount: number;
   status: GameStatus;
   createdAt: number;
   vsBot?: boolean;
+  roomSlug?: string;
 }
 
 // Game Result Types

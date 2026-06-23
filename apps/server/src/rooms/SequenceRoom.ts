@@ -79,7 +79,7 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       "Player joined Sequence"
     );
 
-    if (this.clients.length >= this.maxClients) {
+    if (this.clients.length >= this.maxPlayers) {
       this.lock();
     }
   }
@@ -111,7 +111,14 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
     const rank = cardStr.slice(0, -1);
 
     card.rank = rank;
-    card.suit = suitChar === "H" ? "hearts" : suitChar === "D" ? "diamonds" : suitChar === "C" ? "clubs" : "spades";
+    card.suit =
+      suitChar === "H"
+        ? "hearts"
+        : suitChar === "D"
+          ? "diamonds"
+          : suitChar === "C"
+            ? "clubs"
+            : "spades";
 
     player.hand.push(card);
     this.state.deckRemaining = this.deck.length;
@@ -250,8 +257,12 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       grid[y] = [];
       for (let x = 0; x < 10; x++) {
         // Check for free corners (count for all teams)
-        if ((x === 0 && y === 0) || (x === 9 && y === 0) || 
-            (x === 0 && y === 9) || (x === 9 && y === 9)) {
+        if (
+          (x === 0 && y === 0) ||
+          (x === 9 && y === 0) ||
+          (x === 0 && y === 9) ||
+          (x === 9 && y === 9)
+        ) {
           grid[y][x] = 2; // Free corner (wild)
         } else {
           grid[y][x] = -1; // Empty
@@ -332,7 +343,13 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
     return foundSequences.length;
   }
 
-  private isSequenceAt(grid: number[][], startX: number, startY: number, dx: number, dy: number): boolean {
+  private isSequenceAt(
+    grid: number[][],
+    startX: number,
+    startY: number,
+    dx: number,
+    dy: number
+  ): boolean {
     for (let i = 0; i < 5; i++) {
       const x = startX + i * dx;
       const y = startY + i * dy;
@@ -368,7 +385,13 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
     return sharedCount > 1;
   }
 
-  private markSequenceUsed(startX: number, startY: number, dx: number, dy: number, usedInSequence: Set<string>): void {
+  private markSequenceUsed(
+    startX: number,
+    startY: number,
+    dx: number,
+    dy: number,
+    usedInSequence: Set<string>
+  ): void {
     for (let i = 0; i < 5; i++) {
       const x = startX + i * dx;
       const y = startY + i * dy;
@@ -412,4 +435,3 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
     return null;
   }
 }
-

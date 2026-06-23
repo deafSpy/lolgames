@@ -9,7 +9,7 @@ services:
     runtime: node
     region: singapore # Choose: oregon, frankfurt, singapore, ohio
     plan: free
-    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @multiplayer/server build
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter "@multiplayer/server..." build
     startCommand: node apps/server/dist/index.js
     healthCheckPath: /health
     envVars:
@@ -65,7 +65,7 @@ services:
     runtime: static
     region: oregon # Should match backend region
     plan: free
-    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @multiplayer/web build
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter "@multiplayer/web..." build
     staticPublishPath: apps/web/out # Next.js static export output
     headers:
       - path: /*

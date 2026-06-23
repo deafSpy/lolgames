@@ -4,7 +4,7 @@ import type { Schema } from "@colyseus/schema";
 // Singleton client instance
 let client: Client | null = null;
 
-const GAME_SERVER_URL = process.env.NEXT_PUBLIC_GAME_SERVER_URL || "ws://localhost:3001";
+const GAME_SERVER_URL = process.env.NEXT_PUBLIC_GAME_SERVER_URL || "ws://localhost:3002";
 
 /**
  * Get or create the Colyseus client instance
@@ -56,6 +56,7 @@ export interface RoomListing {
   roomId: string;
   clients: number;
   maxClients: number;
+  spectatorCount?: number;
   name: string;
   metadata?: Record<string, unknown>;
 }
@@ -174,6 +175,36 @@ export async function getAvailableRooms(roomName?: string): Promise<RoomListing[
   } catch (error) {
     console.error("Error fetching rooms:", error);
     return [];
+  }
+}
+
+export interface SlugLookupResult {
+  roomId: string;
+  roomSlug: string;
+  name: string;
+  clients: number;
+  maxClients: number;
+  locked: boolean;
+  private: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Look up a room by its human-readable slug.
+ * Returns null when the slug doesn't exist or the request fails.
+ */
+export async function lookupRoomBySlug(slug: string): Promise<SlugLookupResult | null> {
+  try {
+    const httpUrl = GAME_SERVER_URL.replace("ws://", "http://").replace("wss://", "https://");
+    const response = await fetch(`${httpUrl}/api/rooms/slug/${encodeURIComponent(slug)}`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as SlugLookupResult;
+  } catch {
+    return null;
   }
 }
 

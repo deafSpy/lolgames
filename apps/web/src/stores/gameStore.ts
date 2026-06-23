@@ -17,6 +17,27 @@ import {
 } from "@/lib/colyseus";
 import { useAuthStore } from "./authStore";
 
+// Valid GameType wire values (e.g. "connect4", "rps"), used to validate
+// untrusted room metadata coming off the lobby stream / REST listing.
+const VALID_GAME_TYPES = new Set<string>(Object.values(GameType));
+
+/**
+ * Normalize a game type from room metadata or a room name into a valid
+ * GameType. Bot rooms carry a "_bot" suffix (e.g. "quoridor_bot") that is not
+ * a valid GameType, so it must be stripped; any unknown value falls back to
+ * CONNECT4 so the lobby never renders an undefined label/color.
+ */
+function normalizeGameType(rawGameType: unknown, roomName?: string): GameType {
+  for (const candidate of [typeof rawGameType === "string" ? rawGameType : undefined, roomName]) {
+    if (!candidate) continue;
+    const stripped = candidate.replace("_bot", "");
+    if (VALID_GAME_TYPES.has(stripped)) {
+      return stripped as GameType;
+    }
+  }
+  return GameType.CONNECT4;
+}
+
 interface GameStore {
   // Connection state
   room: Room<Schema> | null;
@@ -64,40 +85,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return subscribeToLobbyUpdates((lobbies) => {
       console.log("Received lobby update:", lobbies.length, "rooms");
       const lobbyRooms: LobbyRoom[] = lobbies.map((room) => {
-        // Normalize game type from room name (handle bot rooms like "quoridor_bot")
-        let gameType = room.metadata?.gameType as GameType;
-        if (!gameType && room.name) {
-          // Extract game type from room name (remove "_bot" suffix if present)
-          const normalizedName = room.name.replace("_bot", "");
-          switch (normalizedName) {
-            case "connect4":
-              gameType = GameType.CONNECT4;
-              break;
-            case "rps":
-              gameType = GameType.ROCK_PAPER_SCISSORS;
-              break;
-            case "quoridor":
-              gameType = GameType.QUORIDOR;
-              break;
-            case "sequence":
-              gameType = GameType.SEQUENCE;
-              break;
-            case "catan":
-              gameType = GameType.CATAN;
-              break;
-            case "splendor":
-              gameType = GameType.SPLENDOR;
-              break;
-            case "monopoly_deal":
-              gameType = GameType.MONOPOLY_DEAL;
-              break;
-            case "blackjack":
-              gameType = GameType.BLACKJACK;
-              break;
-            default:
-              gameType = GameType.CONNECT4;
-          }
-        }
+        // Normalize game type from metadata or room name (strips the "_bot"
+        // suffix on bot rooms; unknown values fall back to CONNECT4).
+        const gameType = normalizeGameType(room.metadata?.gameType, room.name);
 
         // Get status from metadata, fallback to checking player count
         const status =
@@ -106,13 +96,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
         return {
           roomId: room.roomId,
-          gameType: gameType || GameType.CONNECT4,
+          gameType,
           hostName: (room.metadata?.hostName as string) || "Unknown",
           playerCount: room.clients,
           maxPlayers: room.maxClients,
+          spectatorCount: room.spectatorCount ?? 0,
           status,
           createdAt: (room.metadata?.createdAt as number) || Date.now(),
           vsBot: room.name?.includes("_bot") || false,
+          roomSlug: (room.metadata?.roomSlug as string) || undefined,
         };
       });
       set({ availableRooms: lobbyRooms, isLoadingRooms: false });
@@ -126,40 +118,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const rooms = await getAvailableRooms(gameType);
       console.log("Fetched rooms:", rooms);
       const lobbyRooms: LobbyRoom[] = rooms.map((room: RoomListing) => {
-        // Normalize game type from room name (handle bot rooms like "quoridor_bot")
-        let gameType = room.metadata?.gameType as GameType;
-        if (!gameType && room.name) {
-          // Extract game type from room name (remove "_bot" suffix if present)
-          const normalizedName = room.name.replace("_bot", "");
-          switch (normalizedName) {
-            case "connect4":
-              gameType = GameType.CONNECT4;
-              break;
-            case "rps":
-              gameType = GameType.ROCK_PAPER_SCISSORS;
-              break;
-            case "quoridor":
-              gameType = GameType.QUORIDOR;
-              break;
-            case "sequence":
-              gameType = GameType.SEQUENCE;
-              break;
-            case "catan":
-              gameType = GameType.CATAN;
-              break;
-            case "splendor":
-              gameType = GameType.SPLENDOR;
-              break;
-            case "monopoly_deal":
-              gameType = GameType.MONOPOLY_DEAL;
-              break;
-            case "blackjack":
-              gameType = GameType.BLACKJACK;
-              break;
-            default:
-              gameType = GameType.CONNECT4;
-          }
-        }
+        // Normalize game type from metadata or room name (strips the "_bot"
+        // suffix on bot rooms; unknown values fall back to CONNECT4).
+        const gameType = normalizeGameType(room.metadata?.gameType, room.name);
 
         // Get status from metadata, fallback to checking player count
         const status =
@@ -168,13 +129,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
         return {
           roomId: room.roomId,
-          gameType: gameType || GameType.CONNECT4,
+          gameType,
           hostName: (room.metadata?.hostName as string) || "Unknown",
           playerCount: room.clients,
           maxPlayers: room.maxClients,
+          spectatorCount: room.spectatorCount ?? 0,
           status,
           createdAt: (room.metadata?.createdAt as number) || Date.now(),
           vsBot: room.name?.includes("_bot") || false,
+          roomSlug: (room.metadata?.roomSlug as string) || undefined,
         };
       });
       console.log("Mapped lobby rooms:", lobbyRooms);

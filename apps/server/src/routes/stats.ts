@@ -51,8 +51,11 @@ export async function registerStatsRoutes(app: FastifyInstance) {
           });
         }
 
-        // Get all player stats for this user
-        const stats = await userService.getAllPlayerStats(userId);
+        // Get all player stats and win streaks in parallel
+        const [stats, streaks] = await Promise.all([
+          userService.getAllPlayerStats(userId),
+          userService.getWinStreaks(userId),
+        ]);
 
         return {
           user: {
@@ -61,6 +64,7 @@ export async function registerStatsRoutes(app: FastifyInstance) {
             isAnonymous: user.is_anonymous,
           },
           stats,
+          streaks,
         };
       } catch (error) {
         logger.error({ error, userId: request.query.userId }, "Failed to get player stats");

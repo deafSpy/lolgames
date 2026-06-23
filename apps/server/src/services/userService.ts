@@ -399,6 +399,48 @@ class UserService {
   }
 
   /**
+   * Compute current and longest win streaks for a user from match history.
+   * Aborted games are excluded from the streak calculation.
+   */
+  async getWinStreaks(userId: string): Promise<{ current: number; longest: number }> {
+    try {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(userId)) return { current: 0, longest: 0 };
+
+      const results = await database.query<{ result: string }>(
+        `SELECT mp.result
+         FROM match_participants mp
+         JOIN matches m ON mp.match_id = m.id
+         WHERE mp.user_id = $1 AND mp.result != 'aborted'
+         ORDER BY m.ended_at ASC`,
+        [userId]
+      );
+
+      let longest = 0;
+      let run = 0;
+      for (const { result } of results) {
+        if (result === "win") {
+          run++;
+          if (run > longest) longest = run;
+        } else {
+          run = 0;
+        }
+      }
+
+      let current = 0;
+      for (let i = results.length - 1; i >= 0; i--) {
+        if (results[i].result === "win") current++;
+        else break;
+      }
+
+      return { current, longest };
+    } catch (error) {
+      logger.error({ error, userId }, "Failed to get win streaks");
+      return { current: 0, longest: 0 };
+    }
+  }
+
+  /**
    * Get leaderboard for a game type
    */
   async getLeaderboard(
@@ -408,6 +450,7 @@ class UserService {
     Array<{
       user_id: string;
       display_name: string;
+      avatar_url: string | null;
       elo: number;
       wins: number;
       losses: number;
@@ -418,9 +461,10 @@ class UserService {
     try {
       return await database.query(
         `
-        SELECT 
+        SELECT
           u.id as user_id,
           u.display_name,
+          u.avatar_url,
           ps.elo,
           ps.wins,
           ps.losses,

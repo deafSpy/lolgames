@@ -18,6 +18,7 @@ interface LobbyRoomListing {
   roomId: string;
   clients: number;
   maxClients: number;
+  spectatorCount: number;
   name: string;
   metadata: {
     gameType: string;
@@ -34,6 +35,7 @@ interface LobbyData {
   host: string;
   currentPlayers: number;
   maxPlayers: number;
+  spectatorCount?: number;
   status: string;
   vsBot: boolean;
   createdAt: string;
@@ -91,6 +93,7 @@ function toRoomListing(lobby: LobbyData): LobbyRoomListing {
     roomId: lobby.roomId,
     clients: lobby.currentPlayers,
     maxClients: lobby.maxPlayers,
+    spectatorCount: lobby.spectatorCount ?? 0,
     name: `${lobby.gameType}${lobby.vsBot ? "_bot" : ""}`,
     metadata: {
       gameType: lobby.gameType,

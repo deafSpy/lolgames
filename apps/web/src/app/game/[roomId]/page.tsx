@@ -30,6 +30,7 @@ import {
   clearSession,
   saveSession,
   getBrowserSessionId,
+  lookupRoomBySlug,
 } from "@/lib/colyseus";
 import { GameType, RPSChoice } from "@multiplayer/shared";
 import type { Room } from "colyseus.js";
@@ -43,6 +44,7 @@ interface PlayerInfo {
   isSpectator: boolean;
   wasInitialPlayer: boolean;
   isConnected: boolean;
+  isHost?: boolean;
   wallsRemaining?: number;
   x?: number;
   y?: number;
@@ -276,6 +278,10 @@ export default function GameRoomPage() {
     room.onMessage("error", (data) => {
       setError(data.message);
       setTimeout(() => setError(null), 3000);
+    });
+
+    room.onMessage("kicked", (data: { reason: string }) => {
+      setError(data.reason || "You were kicked from the room.");
     });
   }, []);
 
@@ -554,6 +560,7 @@ export default function GameRoomPage() {
   // Materialize the players map as an array once per render so the lobby/waiting
   // JSX can iterate without re-deriving it on every cell.
   const players: PlayerInfo[] = gameState?.players ? Array.from(gameState.players.values()) : [];
+  const isAmHost = myRole?.isHost === true;
 
   // Debug logging
   // Debug turn logic
@@ -955,6 +962,14 @@ export default function GameRoomPage() {
                             <div className="text-left">
                               <p className="font-medium text-white flex items-center gap-2">
                                 {player.displayName}
+                                {player.isHost && (
+                                  <span
+                                    className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300"
+                                    title="Room host"
+                                  >
+                                    👑
+                                  </span>
+                                )}
                                 {player.isBot && (
                                   <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">
                                     Bot
@@ -971,12 +986,12 @@ export default function GameRoomPage() {
                               </p>
                             </div>
                           </div>
-                          {!player.isBot && player.id !== playerId && (
+                          {isAmHost && player.id !== playerId && (
                             <button
                               className="text-surface-400 hover:text-error transition-colors p-2"
                               title="Kick player"
                               onClick={() => {
-                                room?.send("kick_player", { targetSessionId: player.id });
+                                room?.send("kick_player", { playerId: player.id });
                               }}
                             >
                               <svg
@@ -999,7 +1014,7 @@ export default function GameRoomPage() {
                   </div>
 
                   {/* Add Bot Button */}
-                  {!isSpectator && players.filter((p) => !p.isSpectator).length < 4 && (
+                  {isAmHost && players.filter((p) => !p.isSpectator).length < 4 && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}

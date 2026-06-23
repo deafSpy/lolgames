@@ -33,6 +33,8 @@ import { MonopolyDealRoom } from "./rooms/MonopolyDealRoom.js";
 import { MonopolyDealBotRoom } from "./rooms/MonopolyDealBotRoom.js";
 import { BlackjackRoom } from "./rooms/BlackjackRoom.js";
 import { BlackjackBotRoom } from "./rooms/BlackjackBotRoom.js";
+import { CatanRoom } from "./rooms/CatanRoom.js";
+import { CatanBotRoom } from "./rooms/CatanBotRoom.js";
 
 async function bootstrap() {
   logger.info("");
@@ -141,6 +143,13 @@ async function bootstrap() {
     };
   });
 
+  // Lightweight keep-alive endpoint for UptimeRobot / external pingers.
+  // Returns immediately — no DB or Redis queries — so it never contributes to cold-start
+  // latency and won't generate spurious errors in Render logs.
+  app.get("/ping", async (_request, reply) => {
+    reply.status(200).send("pong");
+  });
+
   // Test endpoint — development only, gated out of production
   if (config.nodeEnv !== "production") {
     app.get("/test-env", async () => {
@@ -210,6 +219,7 @@ async function bootstrap() {
       const rpsBotRooms = await matchMaker.query({ name: "rps_bot" });
       const quoridorBotRooms = await matchMaker.query({ name: "quoridor_bot" });
       const sequenceBotRooms = await matchMaker.query({ name: "sequence_bot" });
+      const catanBotRooms = await matchMaker.query({ name: "catan_bot" });
       const splendorBotRooms = await matchMaker.query({ name: "splendor_bot" });
       const monopolyDealBotRooms = await matchMaker.query({ name: "monopoly_deal_bot" });
       const blackjackBotRooms = await matchMaker.query({ name: "blackjack_bot" });
@@ -227,6 +237,7 @@ async function bootstrap() {
         ...rpsBotRooms,
         ...quoridorBotRooms,
         ...sequenceBotRooms,
+        ...catanBotRooms,
         ...splendorBotRooms,
         ...monopolyDealBotRooms,
         ...blackjackBotRooms,
@@ -247,6 +258,7 @@ async function bootstrap() {
             rpsBot: rpsBotRooms.length,
             quoridorBot: quoridorBotRooms.length,
             sequenceBot: sequenceBotRooms.length,
+            catanBot: catanBotRooms.length,
             splendorBot: splendorBotRooms.length,
             monopolyDealBot: monopolyDealBotRooms.length,
             blackjackBot: blackjackBotRooms.length,
@@ -297,9 +309,10 @@ async function bootstrap() {
 
   gameServer.define("rps", RPSRoom, { maxPlayers: 2 }).enableRealtimeListing().filterBy(["status"]);
 
-  // Quoridor: 2p today; the 4p variant arrives in Phase 2 via room config.
+  // Quoridor: 2-4 players. Default is 4p (Phase 2); clients may pass maxPlayers: 2
+  // as a join option to create a 2p variant.
   gameServer
-    .define("quoridor", QuoridorRoom, { maxPlayers: 2 })
+    .define("quoridor", QuoridorRoom, { maxPlayers: 4 })
     .enableRealtimeListing()
     .filterBy(["status"]);
 
@@ -307,6 +320,12 @@ async function bootstrap() {
   // can fill correctly.
   gameServer
     .define("sequence", SequenceRoom, { maxPlayers: 4 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  // Catan: 2-4.
+  gameServer
+    .define("catan", CatanRoom, { maxPlayers: 4 })
     .enableRealtimeListing()
     .filterBy(["status"]);
 
@@ -350,6 +369,11 @@ async function bootstrap() {
     .filterBy(["status"]);
 
   gameServer
+    .define("catan_bot", CatanBotRoom, { maxPlayers: 2 })
+    .enableRealtimeListing()
+    .filterBy(["status"]);
+
+  gameServer
     .define("splendor_bot", SplendorBotRoom, { maxPlayers: 2 })
     .enableRealtimeListing()
     .filterBy(["status"]);
@@ -388,6 +412,7 @@ async function bootstrap() {
   );
   logger.info("");
   logger.info("🎯 Available endpoints:");
+  logger.info("   GET  /ping            - Keep-alive (UptimeRobot target)");
   logger.info("   GET  /health          - Health check");
   logger.info("   GET  /history         - Game history");
   logger.info("   GET  /leaderboard     - Rankings");

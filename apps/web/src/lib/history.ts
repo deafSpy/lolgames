@@ -1,7 +1,7 @@
 import { GameType } from "@multiplayer/shared";
 import { getBrowserSessionId } from "./colyseus";
 
-const GAME_SERVER_URL = process.env.NEXT_PUBLIC_GAME_SERVER_URL || "ws://localhost:3001";
+const GAME_SERVER_URL = process.env.NEXT_PUBLIC_GAME_SERVER_URL || "ws://localhost:3002";
 
 export interface RemoteHistoryEntry {
   id: string;

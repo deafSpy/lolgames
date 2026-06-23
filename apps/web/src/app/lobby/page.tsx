@@ -63,6 +63,8 @@ function LobbyContent() {
   const searchParams = useSearchParams();
   const showCreate = searchParams.get("create") === "true";
   const preselectedGame = searchParams.get("game");
+  const errorParam = searchParams.get("error");
+  const errorSlug = searchParams.get("slug");
 
   const {
     availableRooms,
@@ -138,6 +140,21 @@ function LobbyContent() {
           className="fixed top-20 left-1/2 -translate-x-1/2 bg-error/90 text-white px-6 py-3 rounded-xl shadow-lg z-50"
         >
           {connectionError}
+        </motion.div>
+      )}
+
+      {/* Slug-redirect error toast */}
+      {errorParam && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="fixed top-20 left-1/2 -translate-x-1/2 bg-warning/90 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm"
+        >
+          {errorParam === "full"
+            ? `Room "${errorSlug}" is full.`
+            : errorParam === "finished"
+              ? `Room "${errorSlug}" has already finished.`
+              : `Room "${errorSlug}" is unavailable.`}
         </motion.div>
       )}
 
@@ -344,9 +361,19 @@ function RoomCard({
   onJoin: () => void;
   isJoining: boolean;
 }) {
+  const [copied, setCopied] = useState(false);
   const timeAgo = Math.floor((Date.now() - room.createdAt) / 60000);
   const isFull = room.playerCount >= room.maxPlayers;
   const isInProgress = room.status === GameStatus.IN_PROGRESS;
+
+  const handleCopySlug = useCallback(() => {
+    if (!room.roomSlug) return;
+    const url = `${window.location.origin}/game/${room.roomSlug}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [room.roomSlug]);
 
   return (
     <div className="card p-4">
@@ -381,19 +408,59 @@ function RoomCard({
           <span className={isFull ? "text-error" : room.playerCount > 0 ? "text-success" : ""}>
             {room.playerCount}/{room.maxPlayers} players
           </span>
+          {room.spectatorCount > 0 && (
+            <>
+              <span className="mx-1">·</span>
+              <span className="text-surface-500">👁 {room.spectatorCount}</span>
+            </>
+          )}
           <span className="mx-2">•</span>
           <span>{timeAgo}m ago</span>
         </div>
 
-        <Button
-          onClick={onJoin}
-          variant={isInProgress ? "secondary" : isFull ? "ghost" : "primary"}
-          size="sm"
-          disabled={isJoining}
-          isLoading={isJoining}
-        >
-          {isInProgress ? "Spectate" : isFull ? "Full" : "Join"}
-        </Button>
+        <div className="flex items-center gap-2">
+          {room.roomSlug && (
+            <button
+              onClick={handleCopySlug}
+              title={copied ? "Copied!" : "Copy invite link"}
+              className="text-surface-400 hover:text-accent transition-colors p-1 rounded"
+            >
+              {copied ? (
+                <svg
+                  className="w-4 h-4 text-success"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              )}
+            </button>
+          )}
+          <Button
+            onClick={onJoin}
+            variant={isInProgress ? "secondary" : isFull ? "ghost" : "primary"}
+            size="sm"
+            disabled={isJoining}
+            isLoading={isJoining}
+          >
+            {isInProgress ? "Spectate" : isFull ? "Full" : "Join"}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -430,6 +497,7 @@ function CreateRoomModal({
     selectedGame === GameType.ROCK_PAPER_SCISSORS ||
     selectedGame === GameType.QUORIDOR ||
     selectedGame === GameType.SEQUENCE ||
+    selectedGame === GameType.CATAN ||
     selectedGame === GameType.SPLENDOR ||
     selectedGame === GameType.MONOPOLY_DEAL ||
     selectedGame === GameType.BLACKJACK;
@@ -496,6 +564,7 @@ function CreateRoomModal({
                       gameType === GameType.ROCK_PAPER_SCISSORS ||
                       gameType === GameType.QUORIDOR ||
                       gameType === GameType.SEQUENCE ||
+                      gameType === GameType.CATAN ||
                       gameType === GameType.SPLENDOR ||
                       gameType === GameType.MONOPOLY_DEAL) && (
                       <div className="text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-400 mt-1 inline-block">
