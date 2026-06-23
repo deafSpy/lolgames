@@ -3,6 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
+import SlugResolverClient from "./SlugResolverClient";
+
+// Human-readable room slugs (e.g. "swift-blue-fox") are not UUIDs.
+// When the path segment doesn't match a UUID, delegate to the slug resolver.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Connect4Board } from "@/components/games/Connect4Board";
@@ -762,6 +767,12 @@ export default function GameRoomPage() {
       setIsReplaying(false);
     }
   }, [isReplaying, gameType, room, createBotRoom, createRoom, router]);
+
+  // Slug routing: roomId is a human-readable slug — let SlugResolverClient handle it.
+  // All hooks above have already been called unconditionally (required by Rules of Hooks).
+  if (roomId && !UUID_RE.test(roomId)) {
+    return <SlugResolverClient slug={roomId} />;
+  }
 
   // Loading state
   if (isConnecting) {
