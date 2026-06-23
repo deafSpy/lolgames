@@ -5,9 +5,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
 import SlugResolverClient from "./SlugResolverClient";
 
-// Human-readable room slugs (e.g. "swift-blue-fox") are not UUIDs.
-// When the path segment doesn't match a UUID, delegate to the slug resolver.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Colyseus room IDs are short alphanumeric strings with no hyphens (e.g. "lhRbN7LVs").
+// Human-readable slugs are adjective-color-noun format with 2+ hyphens (e.g. "swift-blue-fox").
+// Split by "-": if there are 3+ parts it's a slug; otherwise treat as a Colyseus room ID.
+function isRoomSlug(id: string): boolean {
+  return id.split("-").length >= 3;
+}
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Connect4Board } from "@/components/games/Connect4Board";
@@ -770,7 +773,7 @@ export default function GameRoomPage() {
 
   // Slug routing: roomId is a human-readable slug — let SlugResolverClient handle it.
   // All hooks above have already been called unconditionally (required by Rules of Hooks).
-  if (roomId && !UUID_RE.test(roomId)) {
+  if (roomId && isRoomSlug(roomId)) {
     return <SlugResolverClient slug={roomId} />;
   }
 
