@@ -242,6 +242,98 @@ describe("Connect4 Win Detection", () => {
   });
 });
 
+// ─── StrictMode dedup smoke (DEA-120) ──────────────────────────────────────
+// Verifies that the browserSessionId ghost-slot eviction in BaseRoom.onJoin
+// prevents P2 from being forced to spectator when React StrictMode's double-
+// mount causes P1 to join twice with different sessionIds.
+//
+// Reproduction path (without fix):
+//   1. P1 joins (sessionId1) → initialPlayers = {sid1}
+//   2. StrictMode cleanup fires a non-consented pre-game leave → state.players
+//      loses sid1 but initialPlayers still has it (ghost slot)
+//   3. Second mount: P1 joins again (sessionId2) → initialPlayers = {sid1,sid2}
+//   4. P2 joins: seatsAreFull = 2 >= 2 → P2 becomes Spectator (BUG)
+//
+// With the fix step 3 evicts sid1 from initialPlayers before adding sid2 so
+// P2 can always claim the second seat.
+
+describe("BaseRoom StrictMode double-mount dedup (DEA-120)", () => {
+  it("evicts the ghost slot and lets P2 join as Player 2", () => {
+    const room = makeRoomWithGame();
+    const p1First: FakeClient = { sessionId: "sess-p1-first" };
+    const p1Second: FakeClient = { sessionId: "sess-p1-second" };
+    const p2: FakeClient = { sessionId: "sess-p2" };
+
+    // --- mount 1: P1 joins ---
+    room.onJoin(p1First as any, {
+      playerName: "Alice",
+      browserSessionId: "browser-alice",
+    });
+
+    expect(room.initialPlayers.size).toBe(1);
+    expect(room.initialPlayers.has("sess-p1-first")).toBe(true);
+
+    // Simulate StrictMode cleanup: non-consented pre-game leave removes the
+    // player from state.players but the ghost remains in initialPlayers (this
+    // is the existing onLeave behavior for the waiting-state path).
+    room.state.players.delete("sess-p1-first");
+    // initialPlayers is NOT cleaned up — that's the bug scenario.
+    expect(room.initialPlayers.size).toBe(1);
+
+    // --- mount 2: same browserSessionId, new sessionId ---
+    room.onJoin(p1Second as any, {
+      playerName: "Alice",
+      browserSessionId: "browser-alice",
+    });
+
+    // Ghost slot must have been evicted; only the new sessionId should be present.
+    expect(room.initialPlayers.size).toBe(1);
+    expect(room.initialPlayers.has("sess-p1-first")).toBe(false);
+    expect(room.initialPlayers.has("sess-p1-second")).toBe(true);
+
+    const alicePlayer = room.state.players.get("sess-p1-second")!;
+    expect(alicePlayer).toBeDefined();
+    expect(alicePlayer.isSpectator).toBe(false);
+    expect(alicePlayer.isHost).toBe(true); // only player → host
+
+    // --- P2 joins ---
+    room.onJoin(p2 as any, {
+      playerName: "Bob",
+      browserSessionId: "browser-bob",
+    });
+
+    expect(room.initialPlayers.size).toBe(2);
+    const bobPlayer = room.state.players.get("sess-p2")!;
+    expect(bobPlayer).toBeDefined();
+    expect(bobPlayer.isSpectator).toBe(false);
+  });
+
+  it("does not evict when the prior sessionId is still connected", () => {
+    const room = makeRoomWithGame();
+    const p1: FakeClient = { sessionId: "sess-p1" };
+    const intruder: FakeClient = { sessionId: "sess-intruder" };
+
+    // P1 joins and stays connected.
+    room.onJoin(p1 as any, { playerName: "Alice", browserSessionId: "browser-alice" });
+
+    expect(room.initialPlayers.has("sess-p1")).toBe(true);
+    // state.players still has p1 (they are connected)
+    expect(room.state.players.has("sess-p1")).toBe(true);
+
+    // A second connection attempt with the same browserSessionId while the
+    // first connection is still alive must NOT evict the existing slot.
+    // (This guards against a race where two tabs share a browserSessionId.)
+    room.onJoin(intruder as any, { playerName: "Alice2", browserSessionId: "browser-alice" });
+
+    // Original slot is intact; intruder should be marked spectator (seats full
+    // for a 2-player game is seatsAreFull if maxPlayers is still default 2 and
+    // only one seat used — actually size=1 < 2 so intruder gets a seat too.
+    // The important assertion is that the original player was NOT evicted.)
+    expect(room.state.players.has("sess-p1")).toBe(true);
+    expect(room.initialPlayers.has("sess-p1")).toBe(true);
+  });
+});
+
 // ─── Reconnect smoke (DEA-36) ───────────────────────────────────────────────
 // Verifies BaseRoom.onJoin's reconnect contract: a client coming back with the
 // same sessionId after a refresh-style drop must reuse its existing

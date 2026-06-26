@@ -11,7 +11,7 @@ interface MoveData {
 }
 
 export class Connect4Room extends BaseRoom<Connect4State> {
-  maxClients = 2;
+  // maxClients inherits from BaseRoom (100) so spectators can join beyond the 2-player limit
 
   initializeGame(): void {
     this.setState(new Connect4State());
@@ -55,10 +55,7 @@ export class Connect4Room extends BaseRoom<Connect4State> {
     this.state.board[index] = playerNum;
     this.state.moveCount++;
 
-    logger.info(
-      { roomId: this.roomId, playerId: client.sessionId, column, row },
-      "Piece placed"
-    );
+    logger.info({ roomId: this.roomId, playerId: client.sessionId, column, row }, "Piece placed");
 
     // Broadcast move to all clients
     this.broadcast("move", {
@@ -82,10 +79,12 @@ export class Connect4Room extends BaseRoom<Connect4State> {
       for (let col = 0; col <= COLS - 4; col++) {
         const idx = row * COLS + col;
         const val = board[idx];
-        if (val !== 0 &&
-            val === board[idx + 1] &&
-            val === board[idx + 2] &&
-            val === board[idx + 3]) {
+        if (
+          val !== 0 &&
+          val === board[idx + 1] &&
+          val === board[idx + 2] &&
+          val === board[idx + 3]
+        ) {
           return {
             winner: val === 1 ? this.state.player1Id : this.state.player2Id,
             isDraw: false,
@@ -99,10 +98,12 @@ export class Connect4Room extends BaseRoom<Connect4State> {
       for (let row = 0; row <= ROWS - 4; row++) {
         const idx = row * COLS + col;
         const val = board[idx];
-        if (val !== 0 &&
-            val === board[idx + COLS] &&
-            val === board[idx + COLS * 2] &&
-            val === board[idx + COLS * 3]) {
+        if (
+          val !== 0 &&
+          val === board[idx + COLS] &&
+          val === board[idx + COLS * 2] &&
+          val === board[idx + COLS * 3]
+        ) {
           return {
             winner: val === 1 ? this.state.player1Id : this.state.player2Id,
             isDraw: false,
@@ -116,10 +117,12 @@ export class Connect4Room extends BaseRoom<Connect4State> {
       for (let col = 0; col <= COLS - 4; col++) {
         const idx = row * COLS + col;
         const val = board[idx];
-        if (val !== 0 &&
-            val === board[idx - COLS + 1] &&
-            val === board[idx - COLS * 2 + 2] &&
-            val === board[idx - COLS * 3 + 3]) {
+        if (
+          val !== 0 &&
+          val === board[idx - COLS + 1] &&
+          val === board[idx - COLS * 2 + 2] &&
+          val === board[idx - COLS * 3 + 3]
+        ) {
           return {
             winner: val === 1 ? this.state.player1Id : this.state.player2Id,
             isDraw: false,
@@ -133,10 +136,12 @@ export class Connect4Room extends BaseRoom<Connect4State> {
       for (let col = 0; col <= COLS - 4; col++) {
         const idx = row * COLS + col;
         const val = board[idx];
-        if (val !== 0 &&
-            val === board[idx + COLS + 1] &&
-            val === board[idx + COLS * 2 + 2] &&
-            val === board[idx + COLS * 3 + 3]) {
+        if (
+          val !== 0 &&
+          val === board[idx + COLS + 1] &&
+          val === board[idx + COLS * 2 + 2] &&
+          val === board[idx + COLS * 3 + 3]
+        ) {
           return {
             winner: val === 1 ? this.state.player1Id : this.state.player2Id,
             isDraw: false,
@@ -163,4 +168,3 @@ export class Connect4Room extends BaseRoom<Connect4State> {
     return -1; // Column is full
   }
 }
-

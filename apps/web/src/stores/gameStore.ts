@@ -10,6 +10,8 @@ import {
   getAvailableRooms,
   saveSession,
   clearSession,
+  saveReconnectToken,
+  clearReconnectToken,
   create as createRoomDirect,
   getBrowserSessionId,
   subscribeToLobbyUpdates,
@@ -43,6 +45,7 @@ interface GameStore {
   room: Room<Schema> | null;
   isConnecting: boolean;
   connectionError: string | null;
+  roomSlug: string | null;
 
   // Lobby state
   availableRooms: LobbyRoom[];
@@ -71,6 +74,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   room: null,
   isConnecting: false,
   connectionError: null,
+  roomSlug: null,
   availableRooms: [],
   isLoadingRooms: false,
   playerId: null,
@@ -168,6 +172,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
 
       setupRoomListeners(room, set);
+      room.onMessage("room_info", (data: { roomSlug?: string }) => {
+        if (data.roomSlug) set({ roomSlug: data.roomSlug });
+      });
       saveSession({
         roomId: room.roomId,
         sessionId: room.sessionId,
@@ -175,12 +182,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
         gameType,
         browserSessionId: getBrowserSessionId(),
       });
+      if (room.reconnectionToken) saveReconnectToken(room.roomId, room.reconnectionToken);
 
       set({
         room,
         playerId: room.sessionId,
         isConnecting: false,
       });
+      scheduleSlugFallback(room.roomId);
 
       return room.roomId;
     } catch (error) {
@@ -204,6 +213,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         gameType === GameType.ROCK_PAPER_SCISSORS ||
         gameType === GameType.QUORIDOR ||
         gameType === GameType.SEQUENCE ||
+        gameType === GameType.CATAN ||
         gameType === GameType.SPLENDOR ||
         gameType === GameType.MONOPOLY_DEAL ||
         gameType === GameType.BLACKJACK;
@@ -220,6 +230,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
 
       setupRoomListeners(room, set);
+      room.onMessage("room_info", (data: { roomSlug?: string }) => {
+        if (data.roomSlug) set({ roomSlug: data.roomSlug });
+      });
       saveSession({
         roomId: room.roomId,
         sessionId: room.sessionId,
@@ -227,12 +240,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
         gameType: roomName,
         browserSessionId: getBrowserSessionId(),
       });
+      if (room.reconnectionToken) saveReconnectToken(room.roomId, room.reconnectionToken);
 
       set({
         room,
         playerId: room.sessionId,
         isConnecting: false,
       });
+      scheduleSlugFallback(room.roomId);
 
       return room.roomId;
     } catch (error) {
@@ -252,6 +267,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const room = await joinById(roomId, { playerName, browserSessionId, userId: authUserId });
 
       setupRoomListeners(room, set);
+      room.onMessage("room_info", (data: { roomSlug?: string }) => {
+        if (data.roomSlug) set({ roomSlug: data.roomSlug });
+      });
       saveSession({
         roomId: room.roomId,
         sessionId: room.sessionId,
@@ -259,12 +277,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
         gameType: (room.name as GameType) || GameType.CONNECT4,
         browserSessionId: getBrowserSessionId(),
       });
+      if (room.reconnectionToken) saveReconnectToken(room.roomId, room.reconnectionToken);
 
       set({
         room,
         playerId: room.sessionId,
         isConnecting: false,
       });
+      scheduleSlugFallback(room.roomId);
 
       return true;
     } catch (error) {
@@ -287,9 +307,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   leaveRoom: async () => {
     const { room } = get();
     if (room) {
+      clearReconnectToken(room.roomId);
       await room.leave();
       clearSession();
-      set({ room: null, playerId: null });
+      set({ room: null, playerId: null, roomSlug: null });
     }
   },
 
@@ -300,6 +321,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 }));
+
+// REST fallback: if the room_info WebSocket message was missed (race condition
+// where server sends it before the client JOIN_ROOM promise resolves), fetch
+// the slug from the matchmaker REST API after a short delay.
+function scheduleSlugFallback(roomId: string): void {
+  setTimeout(async () => {
+    if (useGameStore.getState().roomSlug) return;
+    try {
+      const rooms = await getAvailableRooms();
+      const found = rooms.find((r: RoomListing) => r.roomId === roomId);
+      const slug = found?.metadata?.roomSlug as string | undefined;
+      if (slug) useGameStore.setState({ roomSlug: slug });
+    } catch {
+      // Non-critical — slug fallback failed silently
+    }
+  }, 2000);
+}
 
 // Helper to set up room event listeners
 function setupRoomListeners(room: Room<Schema>, set: (state: Partial<GameStore>) => void) {

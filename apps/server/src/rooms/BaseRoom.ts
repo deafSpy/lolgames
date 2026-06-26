@@ -27,6 +27,13 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   turnTimer: Delayed | null = null;
   initialPlayers: Set<string> = new Set(); // Players that were in the lobby at game start
   protected playerIdentities: Map<string, ParticipantIdentity> = new Map();
+  // Maps browserSessionId → sessionId for the current initialPlayer slot.
+  // Used to evict ghost slots left behind by React StrictMode double-mount:
+  // StrictMode cleanup sends a non-consented leave during the waiting phase,
+  // removing the player from state.players but leaving initialPlayers untouched.
+  // When the same browserSessionId re-joins, we detect and clear the stale slot
+  // so seatsAreFull is computed correctly.
+  protected browserSessionToInitialPlayer: Map<string, string> = new Map();
   protected roomSlug: string = ""; // Human-readable room code (e.g., "swift-blue-fox")
   protected hostSessionId: string = ""; // Track the host for kick/bot management
   maxPlayers: number = 2; // Authoritative seat count; set from onCreate options
@@ -148,8 +155,53 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       player.isConnected = true;
       player.joinedAt = Date.now();
       player.isBot = false;
-      player.isSpectator = this.state.status === "in_progress"; // Spectator if game already started
-      player.wasInitialPlayer = !player.isSpectator; // Initial player if joining before game starts
+
+      // StrictMode dedup: React StrictMode fires effects twice in dev. The
+      // first-mount cleanup sends a non-consented leave during the waiting
+      // phase, which removes the player from state.players but leaves their
+      // slot in initialPlayers (the pre-game path skips allowReconnection).
+      // On the second mount, the same browserSessionId re-joins with a new
+      // sessionId. Without this check, initialPlayers accumulates two entries
+      // for the same human, filling all seats before P2 can join.
+      //
+      // Extended case: when the waiting-state reconnect window is open, the
+      // old session IS still in state.players (isConnected=false). A fresh
+      // join with the same browserSessionId but a new sessionId must evict
+      // the disconnected slot so seatsAreFull is not inflated by 1.
+      if (options.browserSessionId) {
+        const priorSessionId = this.browserSessionToInitialPlayer.get(options.browserSessionId);
+        if (priorSessionId) {
+          const priorPlayer = this.state.players.get(priorSessionId);
+          const priorIsGone = !priorPlayer;
+          const priorIsDisconnected = priorPlayer && !priorPlayer.isConnected;
+          if (priorIsGone || priorIsDisconnected) {
+            this.initialPlayers.delete(priorSessionId);
+            this.playerIdentities.delete(priorSessionId);
+            this.browserSessionToInitialPlayer.delete(options.browserSessionId);
+            // If the old slot is still in state (allowReconnection window open), remove it
+            // so the dangling window closes cleanly and the seat is freed.
+            if (priorIsDisconnected) {
+              this.state.players.delete(priorSessionId);
+            }
+            logger.info(
+              {
+                roomId: this.roomId,
+                priorSessionId,
+                newSessionId: client.sessionId,
+                browserSessionId: options.browserSessionId,
+                reason: priorIsGone ? "session_gone" : "session_disconnected",
+              },
+              "Dedup: evicted ghost initialPlayer slot"
+            );
+          }
+        }
+      }
+
+      // Spectator if game already in progress OR all game seats are already claimed
+      const seatsAreFull = this.initialPlayers.size >= this.maxPlayers;
+      player.isSpectator =
+        this.state.status === "in_progress" || (this.state.status === "waiting" && seatsAreFull);
+      player.wasInitialPlayer = !player.isSpectator;
       player.isHost = false; // Will be set below if first player
 
       // Track a stable identity for history (userId > browserSessionId > sessionId)
@@ -177,16 +229,24 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         "🔍 Player identity registered"
       );
 
-      // Track the first player as the host
-      if (this.initialPlayers.size === 0 && this.state.status === "waiting") {
+      // Track the first non-spectator player as the host
+      if (
+        !player.isSpectator &&
+        this.initialPlayers.size === 0 &&
+        this.state.status === "waiting"
+      ) {
         this.hostSessionId = client.sessionId;
         player.isHost = true;
         logger.info({ roomId: this.roomId, hostSessionId: this.hostSessionId }, "Host assigned");
       }
 
-      // If game hasn't started yet, add to initial players
-      if (this.state.status === "waiting") {
+      // Only real players (non-spectators, pre-game) go into initialPlayers
+      if (!player.isSpectator && this.state.status === "waiting") {
         this.initialPlayers.add(client.sessionId);
+        // Record browserSessionId → sessionId so we can evict ghost slots on re-join
+        if (options.browserSessionId) {
+          this.browserSessionToInitialPlayer.set(options.browserSessionId, client.sessionId);
+        }
         logger.info(
           {
             roomId: this.roomId,
@@ -204,8 +264,9 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
             playerId: client.sessionId,
             initialPlayers: Array.from(this.initialPlayers),
             gameStatus: this.state.status,
+            isSpectator: player.isSpectator,
           },
-          "Player NOT added to initialPlayers (game already started)"
+          "Player NOT added to initialPlayers (spectator or game already started)"
         );
       }
 
@@ -236,9 +297,21 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       }
     }
 
-    // Send room metadata to the joining client so it knows the human-readable slug
+    // Delay room_info by 250 ms so it arrives AFTER the JOIN_ROOM acknowledgment.
+    // client.send() called within onJoin() is enqueued on the WebSocket before
+    // Colyseus sends JOIN_ROOM (which happens after onJoin() returns). The client
+    // therefore receives ROOM_DATA before onJoin.invoke() fires, meaning no
+    // room_info handler is registered yet and the message is silently dropped.
+    // The 250 ms delay guarantees handlers are in place before delivery.
     if (this.roomSlug) {
-      client.send("room_info", { roomSlug: this.roomSlug });
+      const slug = this.roomSlug;
+      this.clock.setTimeout(() => {
+        try {
+          client.send("room_info", { roomSlug: slug });
+        } catch {
+          // Client disconnected during the handshake window — no-op
+        }
+      }, 250);
     }
 
     // Room now persists since someone joined it
@@ -263,9 +336,13 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       "Player left"
     );
 
-    // Consented leave or game already over → remove immediately.
+    // Consented leave or game already over → remove immediately and free the seat.
     if (consented || this.state.status === "finished") {
       this.state.players.delete(client.sessionId);
+      // Also free the initialPlayers slot so subsequent fresh joins can reclaim
+      // the seat. React StrictMode fires a synthetic consented leave on every
+      // effect re-run; without this cleanup the counter grows monotonically.
+      this.initialPlayers.delete(client.sessionId);
 
       if (this.state.status === "in_progress" && consented) {
         this.handlePlayerForfeit(client.sessionId);
@@ -281,22 +358,65 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       return;
     }
 
-    // Spectators or pre-game disconnects: just drop the player; don't hold the seat.
-    if (player.isSpectator || this.state.status !== "in_progress") {
+    // Spectators: just drop; no reconnect window needed.
+    if (player.isSpectator) {
       this.state.players.delete(client.sessionId);
-      if (player.isSpectator) {
-        lobbyService.spectatorLeft(this.roomId).catch((err) => {
-          logger.warn(
-            { error: err, roomId: this.roomId },
-            "Failed to update spectator count in Redis"
-          );
-        });
-      } else if (this.state.status === "waiting") {
+      lobbyService.spectatorLeft(this.roomId).catch((err) => {
+        logger.warn(
+          { error: err, roomId: this.roomId },
+          "Failed to update spectator count in Redis"
+        );
+      });
+      this.scheduleEmptyRoomDisposal();
+      return;
+    }
+
+    // Non-consented, non-spectator drop in "waiting" state: hold the seat open
+    // so the player can navigate back and reconnect as the same sessionId.
+    // Without this, each disconnect increments initialPlayers without a matching
+    // decrement, so seatsAreFull becomes true after one StrictMode cycle + navigation.
+    if (this.state.status === "waiting") {
+      player.isConnected = false;
+      const reconnectSeconds = Math.max(1, Math.floor(config.game.reconnectTimeout / 1000));
+      logger.info(
+        {
+          roomId: this.roomId,
+          sessionId: client.sessionId,
+          displayName: player.displayName,
+          reconnectWindowSec: reconnectSeconds,
+        },
+        "Reconnect window opened for waiting player"
+      );
+
+      try {
+        await this.allowReconnection(client, reconnectSeconds);
+        // onJoin() fires again with the same sessionId; isConnected flipped back.
+        logger.info(
+          {
+            roomId: this.roomId,
+            sessionId: client.sessionId,
+            displayName: player.displayName,
+          },
+          "Waiting player reconnected"
+        );
+      } catch {
+        // Window expired — free the seat completely so fresh joins can fill it.
+        logger.info(
+          {
+            roomId: this.roomId,
+            sessionId: client.sessionId,
+            displayName: player.displayName,
+            reconnectWindowSec: reconnectSeconds,
+          },
+          "Waiting player reconnect window expired, freeing seat"
+        );
+        this.state.players.delete(client.sessionId);
+        this.initialPlayers.delete(client.sessionId);
         lobbyService.playerLeft(this.roomId).catch((err) => {
           logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
         });
+        this.scheduleEmptyRoomDisposal();
       }
-      this.scheduleEmptyRoomDisposal();
       return;
     }
 
@@ -481,27 +601,32 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   protected checkStartGame(): void {
     if (this.state.status !== "waiting") return;
 
-    // Need all seats filled before the game can start
-    if (this.clients.length < this.maxPlayers) return;
+    // Seated players = non-spectators (bots count as seated; spectators do not)
+    const seatedPlayers = Array.from(this.state.players.values()).filter((p) => !p.isSpectator);
 
-    const allReady = Array.from(this.state.players.values()).every((p) => p.isReady);
+    // Need all seats filled before the game can start
+    if (seatedPlayers.length < this.maxPlayers) return;
+
+    // All seated players must be ready (bots are always ready)
+    const allReady = seatedPlayers.every((p) => p.isReady);
+
     logger.info(
       {
         roomId: this.roomId,
-        clients: this.clients.length,
+        seatedCount: seatedPlayers.length,
         allReady,
         initialPlayers: Array.from(this.initialPlayers),
         players: Array.from(this.state.players.values()).map((p) => ({
           id: p.id,
           isReady: p.isReady,
           isBot: p.isBot,
+          isSpectator: p.isSpectator,
         })),
       },
       "Checking if game should start"
     );
 
     if (allReady) {
-      // Lock in initial players and start game
       this.startGame();
     }
   }

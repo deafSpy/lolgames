@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
 import SlugResolverClient from "./SlugResolverClient";
@@ -9,7 +9,7 @@ import SlugResolverClient from "./SlugResolverClient";
 // Human-readable slugs are adjective-color-noun format with 2+ hyphens (e.g. "swift-blue-fox").
 // Split by "-": if there are 3+ parts it's a slug; otherwise treat as a Colyseus room ID.
 function isRoomSlug(id: string): boolean {
-  return id.split("-").length >= 3;
+  return id.split("-").filter((p) => p).length >= 3;
 }
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
@@ -39,6 +39,10 @@ import {
   saveSession,
   getBrowserSessionId,
   lookupRoomBySlug,
+  saveReconnectToken,
+  getReconnectToken,
+  clearReconnectToken,
+  getAvailableRooms,
 } from "@/lib/colyseus";
 import { GameType, RPSChoice } from "@multiplayer/shared";
 import type { Room } from "colyseus.js";
@@ -218,7 +222,14 @@ export default function GameRoomPage() {
   const router = useRouter();
   const roomId = params.roomId as string;
 
-  const { playerName, leaveRoom, room: existingRoom, createRoom, createBotRoom } = useGameStore();
+  const {
+    playerName,
+    leaveRoom,
+    room: existingRoom,
+    createRoom,
+    createBotRoom,
+    roomSlug: storeRoomSlug,
+  } = useGameStore();
 
   const [room, setRoom] = useState<Room<Schema> | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -235,63 +246,92 @@ export default function GameRoomPage() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [isBoardReady, setIsBoardReady] = useState(false); // Track if board has received initial state
+  // True only when the player explicitly clicks "Leave Room" or "Play Again".
+  // Navigation within the app should NOT send a consented leave so the server
+  // holds the seat open for reconnection (allowReconnection path).
+  const explicitLeaveRef = useRef(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [victoryModalOpen, setVictoryModalOpen] = useState(false);
 
   // Helper function to register message handlers
-  const registerMessageHandlers = useCallback((room: Room<Schema>) => {
-    // Chat message listener
-    room.onMessage(
-      "chat",
-      (data: { senderId: string; senderName: string; content: string; timestamp: number }) => {
-        setChatMessages((prev) => [...prev.slice(-49), data]); // Keep last 50 messages
-      }
-    );
+  const registerMessageHandlers = useCallback(
+    (room: Room<Schema>) => {
+      // For fresh join/reconnect paths not handled by the store, sync slug to store so getShareUrl picks it up.
+      room.onMessage("room_info", (data: { roomSlug?: string }) => {
+        if (data.roomSlug) useGameStore.setState({ roomSlug: data.roomSlug });
+      });
 
-    // RPS game event listeners
-    room.onMessage("player_committed", (data: { playerId: string }) => {
-      console.log("Player committed:", data.playerId);
-    });
+      // Chat message listener
+      room.onMessage(
+        "chat",
+        (data: { senderId: string; senderName: string; content: string; timestamp: number }) => {
+          setChatMessages((prev) => [...prev.slice(-49), data]); // Keep last 50 messages
+        }
+      );
 
-    room.onMessage("choices_revealed", (data: { player1Choice: string; player2Choice: string }) => {
-      console.log("Choices revealed:", data);
-    });
+      // RPS game event listeners
+      room.onMessage("player_committed", (data: { playerId: string }) => {
+        console.log("Player committed:", data.playerId);
+      });
 
-    room.onMessage(
-      "round_result",
-      (data: {
-        roundNumber: number;
-        winner: string;
-        player1Score: number;
-        player2Score: number;
-      }) => {
-        console.log("Round result:", data);
-      }
-    );
+      room.onMessage(
+        "choices_revealed",
+        (data: { player1Choice: string; player2Choice: string }) => {
+          console.log("Choices revealed:", data);
+        }
+      );
 
-    room.onMessage("round_started", (data: { roundNumber: number }) => {
-      console.log("Round started:", data.roundNumber);
-    });
+      room.onMessage(
+        "round_result",
+        (data: {
+          roundNumber: number;
+          winner: string;
+          player1Score: number;
+          player2Score: number;
+        }) => {
+          console.log("Round result:", data);
+        }
+      );
 
-    room.onMessage("round_replay", (data: { roundNumber: number }) => {
-      console.log("Round replayed:", data.roundNumber);
-    });
+      room.onMessage("round_started", (data: { roundNumber: number }) => {
+        console.log("Round started:", data.roundNumber);
+      });
 
-    room.onMessage("timeout", (data: { message: string }) => {
-      console.log("Round timeout:", data.message);
-    });
+      room.onMessage("round_replay", (data: { roundNumber: number }) => {
+        console.log("Round replayed:", data.roundNumber);
+      });
 
-    room.onMessage("auto_choice", (data: { playerId: string }) => {
-      console.log("Auto choice assigned for player:", data.playerId);
-    });
+      room.onMessage("timeout", (data: { message: string }) => {
+        console.log("Round timeout:", data.message);
+      });
 
-    room.onMessage("error", (data) => {
-      setError(data.message);
-      setTimeout(() => setError(null), 3000);
-    });
+      room.onMessage("auto_choice", (data: { playerId: string }) => {
+        console.log("Auto choice assigned for player:", data.playerId);
+      });
 
-    room.onMessage("kicked", (data: { reason: string }) => {
-      setError(data.reason || "You were kicked from the room.");
-    });
-  }, []);
+      room.onMessage(
+        "game_started",
+        (data: { firstPlayer?: string; handNumber?: number; phase?: string }) => {
+          console.log("game_started:", data);
+        }
+      );
+
+      room.onMessage("move", (data: { playerId?: string; [key: string]: unknown }) => {
+        console.log("move broadcast:", data);
+      });
+
+      room.onMessage("error", (data) => {
+        setError(data.message);
+        setTimeout(() => setError(null), 3000);
+      });
+
+      room.onMessage("kicked", (data: { reason: string }) => {
+        setError(data.reason || "You were kicked from the room.");
+        setTimeout(() => router.push("/lobby"), 1500);
+      });
+    },
+    [router]
+  );
 
   // Helper function to extract game state based on game type
   const extractGameState = useCallback((s: any, roomName: string): GameState => {
@@ -431,8 +471,14 @@ export default function GameRoomPage() {
   // Connect to room
   useEffect(() => {
     let currentRoom: Room<Schema> | null = null;
+    // StrictMode in dev fires effects twice (mount → cleanup → remount). The cleanup
+    // runs synchronously while the async joinById is still in flight, so currentRoom
+    // is null when cleanup fires and the first connection is never closed. Setting
+    // cancelled=true lets the async callback self-close after it resolves.
+    let cancelled = false;
     const MAX_RECONNECT_ATTEMPTS = 5;
     const RECONNECT_DELAY_MS = 2000; // Start with 2 second delay
+    const CONNECTION_TIMEOUT_MS = 10_000; // surface error instead of hanging indefinitely
 
     async function connectToRoom() {
       setIsConnecting(true);
@@ -441,12 +487,18 @@ export default function GameRoomPage() {
       setIsBoardReady(false); // Reset board ready state when connecting
 
       try {
-        // If we already have an active room in the store for this roomId, reuse it and skip a new join.
-        if (existingRoom && existingRoom.roomId === roomId) {
+        // Only reuse the store room if its WebSocket connection is still live.
+        // A stale (disconnected) Room object must fall through to reconnect/joinById
+        // so the server can restore the player's original seat via reconnectionToken.
+        if (existingRoom && existingRoom.roomId === roomId && existingRoom.connection?.isOpen) {
           const currentRoomRef = existingRoom;
           setRoom(currentRoomRef);
           setPlayerId(currentRoomRef.sessionId);
           setGameType(normalizeGameType(currentRoomRef.name));
+          // Ensure the per-room token is written for this path too.
+          if (currentRoomRef.reconnectionToken) {
+            saveReconnectToken(currentRoomRef.roomId, currentRoomRef.reconnectionToken);
+          }
 
           // Register message handlers
           registerMessageHandlers(currentRoomRef);
@@ -471,35 +523,78 @@ export default function GameRoomPage() {
           return;
         }
 
-        // Check for existing session
-        const session = getSession();
-
         // Get auth user ID if signed in
         const authUserId = useAuthStore.getState().user?.id;
         const browserSessionId = getBrowserSessionId();
 
-        // If we have a saved reconnection token for *this* room, try resuming
-        // the same Colyseus session first. The server holds the seat open for
-        // RECONNECT_TIMEOUT (DEA-19), so this is the path that preserves the
-        // player's sessionId, board state, and turn slot across refresh, tab
-        // backgrounding, and network switches.
-        if (session?.roomId === roomId && session.reconnectionToken) {
+        // Per-room reconnect token (primary path — survives navigation + unmount).
+        // Stored in localStorage keyed by roomId; cleared only on explicit leave or
+        // game end. The server opens a reconnect window when leave(false) is sent
+        // (non-consented disconnect), so this token is valid even after navigating
+        // away from the room page.
+        const perRoomToken = getReconnectToken(roomId);
+        if (perRoomToken) {
           try {
-            currentRoom = await reconnect(session.reconnectionToken);
+            currentRoom = await Promise.race([
+              reconnect(perRoomToken),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("Reconnect timed out")), CONNECTION_TIMEOUT_MS)
+              ),
+            ]);
+            if (currentRoom?.reconnectionToken) {
+              saveReconnectToken(roomId, currentRoom.reconnectionToken);
+            }
           } catch (reconnectErr) {
-            // Token expired or invalid → drop it and join cleanly.
-            console.warn("Reconnect failed, falling back to fresh join", reconnectErr);
-            clearSession();
+            console.warn("Per-room reconnect failed, falling back to fresh join", reconnectErr);
+            clearReconnectToken(roomId);
             currentRoom = undefined as unknown as Room<Schema>;
           }
         }
 
+        // Legacy fallback: single-session key for tokens saved before the per-room
+        // change was deployed.
         if (!currentRoom) {
-          currentRoom = await joinById(roomId, {
-            playerName,
-            userId: authUserId,
-            browserSessionId,
-          });
+          const session = getSession();
+          if (session?.roomId === roomId && session.reconnectionToken) {
+            try {
+              currentRoom = await Promise.race([
+                reconnect(session.reconnectionToken),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error("Reconnect timed out")), CONNECTION_TIMEOUT_MS)
+                ),
+              ]);
+              if (currentRoom?.reconnectionToken) {
+                saveReconnectToken(roomId, currentRoom.reconnectionToken);
+              }
+            } catch (reconnectErr) {
+              console.warn(
+                "Legacy session reconnect failed, falling back to fresh join",
+                reconnectErr
+              );
+              clearSession();
+              currentRoom = undefined as unknown as Room<Schema>;
+            }
+          }
+        }
+
+        if (!currentRoom) {
+          currentRoom = await Promise.race([
+            joinById(roomId, { playerName, userId: authUserId, browserSessionId }),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error("Could not connect to room. It may no longer exist.")),
+                CONNECTION_TIMEOUT_MS
+              )
+            ),
+          ]);
+        }
+
+        // If cleanup already fired (StrictMode remount), close the connection we
+        // just opened and bail out — the second effect invocation will create the
+        // real connection.
+        if (cancelled) {
+          currentRoom?.leave();
+          return;
         }
 
         setRoom(currentRoom);
@@ -513,9 +608,30 @@ export default function GameRoomPage() {
           gameType: currentRoom.name,
           browserSessionId: getBrowserSessionId(),
         });
+        // Only persist a valid token — undefined/null would be stringified by localStorage
+        // and cause the next reconnect attempt to fail with "Invalid reconnection token format".
+        if (currentRoom?.reconnectionToken) {
+          saveReconnectToken(currentRoom.roomId, currentRoom.reconnectionToken);
+        }
 
         // Register message handlers
         registerMessageHandlers(currentRoom);
+
+        // REST fallback: ensure getShareUrl() shows the human-readable slug even if the
+        // 250 ms delayed `room_info` WebSocket message was missed (race / handshake error).
+        const joinedRoomId = currentRoom?.roomId;
+        setTimeout(async () => {
+          if (!useGameStore.getState().roomSlug) {
+            try {
+              const rooms = await getAvailableRooms();
+              const match = rooms.find((r) => r.roomId === joinedRoomId);
+              const slug = match?.metadata?.roomSlug as string | undefined;
+              if (slug) useGameStore.setState({ roomSlug: slug });
+            } catch {
+              /* non-critical */
+            }
+          }
+        }, 2000);
 
         // Set up state listener
         currentRoom.onStateChange((state) => {
@@ -524,6 +640,16 @@ export default function GameRoomPage() {
           setGameState(plainState);
           setIsBoardReady(true);
         });
+
+        // Colyseus fires the initial onStateChange before joinById resolves, so
+        // by the time we registered the listener above the initial patch is gone.
+        // Bootstrap from room.state directly to unblock spectators joining an
+        // in-progress game where no further state changes will occur.
+        if (currentRoom.state) {
+          const s = currentRoom.state as unknown as GameState;
+          setGameState(extractGameState(s, currentRoom.name || ""));
+          setIsBoardReady(true);
+        }
 
         // Handle room events
         currentRoom.onLeave((code) => {
@@ -540,10 +666,12 @@ export default function GameRoomPage() {
         setIsConnecting(false);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : "Failed to connect";
-        // Only show error if it's not a "room not found" or connection error during reconnection attempts
-        // This gives users time to reconnect naturally through server retry logic
-        if (!errorMsg.includes("room") && reconnectAttempts === 0) {
-          setError(errorMsg);
+        if (errorMsg.toLowerCase().includes("locked") || errorMsg.toLowerCase().includes("full")) {
+          setError("This room is full. Spectator mode is not available for this game type.");
+        } else {
+          // Always surface connection errors — the previous guard `!errorMsg.includes("room")`
+          // incorrectly suppressed Colyseus "room not found" errors, causing infinite loading.
+          setError(errorMsg || "Could not connect to room");
         }
         setIsConnecting(false);
       }
@@ -552,8 +680,19 @@ export default function GameRoomPage() {
     connectToRoom();
 
     return () => {
+      cancelled = true;
       if (currentRoom) {
-        currentRoom.leave();
+        if (explicitLeaveRef.current) {
+          // User clicked "Leave Room" / "Play Again" — consented leave, server
+          // removes the player immediately (no reconnect window needed).
+          currentRoom.leave();
+        } else {
+          // In-app navigation (lobby link, back button, etc.) — non-consented
+          // disconnect so the server calls allowReconnection and holds the seat
+          // for RECONNECT_TIMEOUT seconds. The per-room token in localStorage
+          // lets the player resume their seat if they return within the window.
+          currentRoom.leave(false);
+        }
       }
     };
   }, [roomId, playerName, router]);
@@ -639,6 +778,19 @@ export default function GameRoomPage() {
     }
   }, [room, gameState, isSpectator, playerId]);
 
+  // When the game ends, the reconnect token is no longer useful. Clear it so
+  // the player doesn't accidentally reconnect to a finished room on next visit.
+  useEffect(() => {
+    if (gameState?.status === "finished") {
+      clearReconnectToken(roomId);
+    }
+  }, [gameState?.status, roomId]);
+
+  // Open victory modal when game finishes
+  useEffect(() => {
+    if (isFinished) setVictoryModalOpen(true);
+  }, [isFinished]);
+
   // Define callbacks after isSpectator is available
   const handleReady = useCallback(() => {
     if (room && !isSpectator) {
@@ -646,7 +798,37 @@ export default function GameRoomPage() {
     }
   }, [room, isSpectator]);
 
+  const getShareUrl = useCallback(() => {
+    if (typeof window === "undefined") return "";
+    return storeRoomSlug ? `${window.location.origin}/game/${storeRoomSlug}` : window.location.href;
+  }, [storeRoomSlug]);
+
+  const handleCopyLink = useCallback(async () => {
+    const url = getShareUrl();
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Fallback for HTTP or restricted contexts
+      const ta = document.createElement("textarea");
+      ta.value = url;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  }, [getShareUrl]);
+
   const handleLeave = useCallback(async () => {
+    // Mark as explicit leave so the cleanup sends a consented leave (code 1000),
+    // which clears the player's seat on the server immediately.
+    explicitLeaveRef.current = true;
+    clearReconnectToken(roomId);
     try {
       await leaveRoom();
     } catch (error) {
@@ -654,7 +836,7 @@ export default function GameRoomPage() {
     }
     // Always navigate to lobby, even if leaving fails
     router.push("/lobby");
-  }, [leaveRoom, router]);
+  }, [leaveRoom, router, roomId]);
 
   const handleConnect4Move = useCallback(
     (column: number) => {
@@ -753,6 +935,9 @@ export default function GameRoomPage() {
     const targetGame = gameType || normalizeGameType(room?.name);
     if (isReplaying || !targetGame) return;
     setIsReplaying(true);
+    // Explicit leave path — clear old room's reconnect token and mark consented.
+    explicitLeaveRef.current = true;
+    if (room?.roomId) clearReconnectToken(room.roomId);
     clearSession();
 
     try {
@@ -799,8 +984,14 @@ export default function GameRoomPage() {
     );
   }
 
-  // Error state
-  if (error && !room) {
+  // Error state (connection failed or room not found)
+  if ((error && !room) || (!isConnecting && !room && !error)) {
+    const displayError = error || "This room does not exist or has been closed.";
+    const isRoomNotFound =
+      displayError.toLowerCase().includes("not found") ||
+      displayError.toLowerCase().includes("no longer exist") ||
+      displayError.toLowerCase().includes("timed out") ||
+      !error;
     return (
       <div className="container mx-auto px-4 py-8">
         <div className="card p-8 max-w-md mx-auto text-center">
@@ -819,8 +1010,10 @@ export default function GameRoomPage() {
               />
             </svg>
           </div>
-          <h2 className="text-xl font-semibold mb-2">Connection Failed</h2>
-          <p className="text-surface-400 mb-6">{error}</p>
+          <h2 className="text-xl font-semibold mb-2">
+            {isRoomNotFound ? "Room Not Found" : "Connection Failed"}
+          </h2>
+          <p className="text-surface-400 mb-6">{displayError}</p>
           <Button onClick={() => router.push("/lobby")}>Back to Lobby</Button>
         </div>
       </div>
@@ -912,9 +1105,13 @@ export default function GameRoomPage() {
               </p>
               <div className="p-4 bg-surface-800/50 rounded-xl max-w-sm mx-auto">
                 <p className="text-sm text-surface-400 mb-2">Share this link:</p>
-                <code className="text-primary-400 text-sm break-all">
-                  {typeof window !== "undefined" ? window.location.href : ""}
-                </code>
+                <code className="text-primary-400 text-sm break-all">{getShareUrl()}</code>
+                <button
+                  onClick={handleCopyLink}
+                  className="mt-2 text-xs text-surface-400 hover:text-primary-400 transition-colors"
+                >
+                  {linkCopied ? "Copied!" : "Copy link"}
+                </button>
               </div>
             </div>
           )}
@@ -1070,15 +1267,19 @@ export default function GameRoomPage() {
               )}
               <div className="p-4 bg-surface-800/50 rounded-xl max-w-sm mx-auto">
                 <p className="text-sm text-surface-400 mb-2">Share this link:</p>
-                <code className="text-primary-400 text-sm break-all">
-                  {typeof window !== "undefined" ? window.location.href : ""}
-                </code>
+                <code className="text-primary-400 text-sm break-all">{getShareUrl()}</code>
+                <button
+                  onClick={handleCopyLink}
+                  className="mt-2 text-xs text-surface-400 hover:text-primary-400 transition-colors"
+                >
+                  {linkCopied ? "Copied!" : "Copy link"}
+                </button>
               </div>
             </div>
           )}
 
-          {/* Game content - when loaded and in progress */}
-          {isPlaying && gameState && (
+          {/* Game content - when loaded and in progress or finished */}
+          {(isPlaying || isFinished) && gameState && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1106,7 +1307,7 @@ export default function GameRoomPage() {
               )}
 
               {/* RPS */}
-              {isPlaying && resolvedGameType === GameType.ROCK_PAPER_SCISSORS && gameState && (
+              {resolvedGameType === GameType.ROCK_PAPER_SCISSORS && gameState && (
                 <RPSGame
                   roundNumber={gameState.roundNumber || 1}
                   targetScore={gameState.targetScore || 3}
@@ -1148,7 +1349,7 @@ export default function GameRoomPage() {
               )}
 
               {/* Sequence */}
-              {isPlaying && resolvedGameType === GameType.SEQUENCE && gameState && (
+              {resolvedGameType === GameType.SEQUENCE && gameState && (
                 <SequenceBoard
                   chips={gameState.chips || []}
                   hand={gameState.players?.get(playerId || "")?.hand || []}
@@ -1164,7 +1365,7 @@ export default function GameRoomPage() {
               )}
 
               {/* Catan */}
-              {isPlaying && resolvedGameType === GameType.CATAN && gameState && (
+              {resolvedGameType === GameType.CATAN && gameState && (
                 <CatanBoard
                   tiles={gameState.tiles || []}
                   vertices={gameState.vertices || new Map()}
@@ -1180,7 +1381,7 @@ export default function GameRoomPage() {
               )}
 
               {/* Splendor */}
-              {isPlaying && resolvedGameType === GameType.SPLENDOR && (
+              {resolvedGameType === GameType.SPLENDOR && (
                 <>
                   {gameState ? (
                     <SplendorBoard
@@ -1208,7 +1409,7 @@ export default function GameRoomPage() {
               )}
 
               {/* Monopoly Deal */}
-              {isPlaying && resolvedGameType === GameType.MONOPOLY_DEAL && gameState && (
+              {resolvedGameType === GameType.MONOPOLY_DEAL && gameState && (
                 <MonopolyDealBoard
                   players={gameState.players || new Map()}
                   currentTurnId={gameState.currentTurnId}
@@ -1224,7 +1425,7 @@ export default function GameRoomPage() {
               )}
 
               {/* Blackjack */}
-              {isPlaying && resolvedGameType === GameType.BLACKJACK && gameState && (
+              {resolvedGameType === GameType.BLACKJACK && gameState && (
                 <BlackjackBoard
                   players={gameState.players || new Map()}
                   dealerHand={gameState.dealerHand || []}
@@ -1247,56 +1448,177 @@ export default function GameRoomPage() {
             </motion.div>
           )}
 
-          {/* Game finished modal */}
-          {isFinished && gameState && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-              <div className="absolute inset-0 bg-surface-950/70 backdrop-blur-sm" />
-              <div className="relative card max-w-md w-full p-6 text-center">
-                <div
-                  className={`w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 ${
-                    gameState.isDraw
-                      ? "bg-surface-700"
-                      : gameState.winnerId === playerId
-                        ? "bg-success/20"
-                        : "bg-error/20"
-                  }`}
-                >
-                  {gameState.isDraw ? (
-                    <span className="text-4xl">🤝</span>
-                  ) : gameState.winnerId === playerId ? (
-                    <span className="text-4xl">🏆</span>
-                  ) : (
-                    <span className="text-4xl">😔</span>
-                  )}
-                </div>
-                <h2 className="text-2xl font-bold mb-2">
-                  {gameState.isDraw
-                    ? "It's a Draw!"
-                    : gameState.winnerId === playerId
-                      ? "You Won!"
-                      : "You Lost"}
-                </h2>
-                <p className="text-surface-400 mb-6">
-                  {gameState.isDraw
-                    ? "Great game! It was close."
-                    : gameState.winnerId === playerId
-                      ? "Congratulations!"
-                      : "Better luck next time!"}
-                </p>
-                <div className="flex gap-4 justify-center">
-                  <Button variant="primary" onClick={handlePlayAgain} isLoading={isReplaying}>
-                    Play Again
-                  </Button>
-                  <Button variant="secondary" onClick={handleLeave}>
-                    Back to Lobby
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Victory overlay modal — dismissible, shows game behind */}
+          <AnimatePresence>
+            {victoryModalOpen &&
+              isFinished &&
+              gameState &&
+              (() => {
+                const winnerPlayer = gameState.winnerId
+                  ? gameState.players?.get(gameState.winnerId)
+                  : null;
+                const isWinner = gameState.winnerId === playerId;
+                const isDraw = gameState.isDraw;
+
+                const statsRows: Array<{ label: string; value: string }> = [];
+                if (resolvedGameType === GameType.ROCK_PAPER_SCISSORS) {
+                  statsRows.push({
+                    label: "Final Score",
+                    value: `${gameState.player1Score ?? 0} – ${gameState.player2Score ?? 0}`,
+                  });
+                  const diff = Math.abs(
+                    (gameState.player1Score ?? 0) - (gameState.player2Score ?? 0)
+                  );
+                  statsRows.push({ label: "Point Differential", value: `+${diff}` });
+                  statsRows.push({
+                    label: "Rounds Played",
+                    value: String(gameState.roundNumber ?? 0),
+                  });
+                } else if (resolvedGameType === GameType.CONNECT4) {
+                  statsRows.push({ label: "Total Moves", value: String(gameState.moveCount ?? 0) });
+                } else if (resolvedGameType === GameType.SEQUENCE) {
+                  statsRows.push({
+                    label: "Team 1 Sequences",
+                    value: String(gameState.team1Sequences ?? 0),
+                  });
+                  statsRows.push({
+                    label: "Team 2 Sequences",
+                    value: String(gameState.team2Sequences ?? 0),
+                  });
+                  statsRows.push({
+                    label: "Needed to Win",
+                    value: String(gameState.sequencesToWin ?? 2),
+                  });
+                } else if (resolvedGameType === GameType.SPLENDOR) {
+                  statsRows.push({
+                    label: "Points to Win",
+                    value: String(gameState.pointsToWin ?? 15),
+                  });
+                } else if (resolvedGameType === GameType.BLACKJACK) {
+                  statsRows.push({
+                    label: "Hand Reached",
+                    value: String(gameState.handNumber ?? 0),
+                  });
+                } else if (resolvedGameType === GameType.MONOPOLY_DEAL) {
+                  statsRows.push({ label: "Sets to Win", value: String(gameState.setsToWin ?? 3) });
+                }
+
+                return (
+                  <motion.div
+                    key="victory-modal"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-50 flex items-center justify-center px-4"
+                  >
+                    {/* Backdrop — click outside to dismiss */}
+                    <div
+                      className="absolute inset-0 bg-surface-950/75 backdrop-blur-sm cursor-pointer"
+                      onClick={() => setVictoryModalOpen(false)}
+                    />
+
+                    <motion.div
+                      key="victory-card"
+                      initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}
+                      className="relative card max-w-sm w-full p-6 text-center"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* Close button */}
+                      <button
+                        onClick={() => setVictoryModalOpen(false)}
+                        className="absolute top-3 right-3 text-surface-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-surface-700"
+                        aria-label="Close"
+                      >
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </button>
+
+                      {/* Result icon */}
+                      <div
+                        className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 ${
+                          isDraw ? "bg-surface-700" : isWinner ? "bg-success/20" : "bg-error/20"
+                        }`}
+                      >
+                        <span className="text-3xl">{isDraw ? "🤝" : isWinner ? "🏆" : "😔"}</span>
+                      </div>
+
+                      {/* Headline */}
+                      <h2 className="text-2xl font-bold mb-1">
+                        {isDraw ? "It's a Draw!" : isWinner ? "You Won!" : "You Lost"}
+                      </h2>
+
+                      {/* Winner name with crown */}
+                      {!isDraw && winnerPlayer && (
+                        <p className="text-surface-300 mb-4 flex items-center justify-center gap-1.5">
+                          <span className="text-yellow-400">👑</span>
+                          <span className="font-semibold">{winnerPlayer.displayName}</span>
+                          <span className="text-surface-400 text-sm">wins</span>
+                        </p>
+                      )}
+                      {isDraw && (
+                        <p className="text-surface-400 mb-4 text-sm">Great game! It was close.</p>
+                      )}
+
+                      {/* Stats */}
+                      {statsRows.length > 0 && (
+                        <div className="mb-5 rounded-xl bg-surface-800/60 divide-y divide-surface-700/50">
+                          {statsRows.map(({ label, value }) => (
+                            <div
+                              key={label}
+                              className="flex items-center justify-between px-4 py-2.5 text-sm"
+                            >
+                              <span className="text-surface-400">{label}</span>
+                              <span className="font-semibold text-white">{value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex gap-3 justify-center">
+                        <Button variant="primary" onClick={handlePlayAgain} isLoading={isReplaying}>
+                          Play Again
+                        </Button>
+                        <Button variant="secondary" onClick={handleLeave}>
+                          Back to Lobby
+                        </Button>
+                      </div>
+
+                      <p className="mt-3 text-xs text-surface-500">
+                        Click outside or press × to view the final board
+                      </p>
+                    </motion.div>
+                  </motion.div>
+                );
+              })()}
+          </AnimatePresence>
         </div>
 
         {/* Actions */}
+        {isFinished && !victoryModalOpen && gameState && (
+          <div className="mt-6 flex gap-3 justify-center">
+            <Button variant="primary" onClick={handlePlayAgain} isLoading={isReplaying}>
+              Play Again
+            </Button>
+            <Button variant="secondary" onClick={handleLeave}>
+              Back to Lobby
+            </Button>
+          </div>
+        )}
         {!isFinished && gameState && (
           <div className="mt-6 flex justify-center">
             <Button variant="ghost" onClick={handleLeave}>

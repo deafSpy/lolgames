@@ -278,3 +278,39 @@ export function clearSession(): void {
     localStorage.removeItem(SESSION_KEY);
   }
 }
+
+// Per-room reconnect token storage — keyed by roomId so tokens survive
+// component unmounts without being clobbered by other room sessions.
+const RECONNECT_TOKEN_PREFIX = "lolgames_reconnect_";
+
+/**
+ * Persist a Colyseus reconnection token for a specific room.
+ * Survives component unmount and same-tab navigation.
+ */
+export function saveReconnectToken(roomId: string, token: string): void {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(`${RECONNECT_TOKEN_PREFIX}${roomId}`, token);
+  }
+}
+
+/**
+ * Retrieve a persisted reconnect token for a room. Returns null if missing or
+ * if the stored value doesn't match the expected "roomId:token" format (which
+ * can happen when reconnectionToken was undefined at save time and localStorage
+ * stringified it as the literal string "undefined").
+ */
+export function getReconnectToken(roomId: string): string | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem(`${RECONNECT_TOKEN_PREFIX}${roomId}`);
+  if (!token || !token.includes(":")) return null;
+  return token;
+}
+
+/**
+ * Remove the persisted reconnect token for a room (explicit leave or game end).
+ */
+export function clearReconnectToken(roomId: string): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(`${RECONNECT_TOKEN_PREFIX}${roomId}`);
+  }
+}

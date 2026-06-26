@@ -53,8 +53,8 @@ const TIER1_CARDS: Array<{
   { gemType: "white", points: 0, cost: { blue: 1, green: 1, red: 1, black: 1 } },
   { gemType: "white", points: 1, cost: { green: 2, red: 2 } },
   { gemType: "white", points: 1, cost: { green: 3 } },
-  { gemType: "white", points: 2, cost: { red: 6 } },
-  { gemType: "white", points: 2, cost: { blue: 2, green: 1 } },
+  { gemType: "white", points: 1, cost: { red: 6 } },
+  { gemType: "white", points: 1, cost: { blue: 2, green: 1 } },
   // Black cards
   { gemType: "black", points: 0, cost: { white: 1 } },
   { gemType: "black", points: 0, cost: { white: 1, red: 1 } },
@@ -62,8 +62,8 @@ const TIER1_CARDS: Array<{
   { gemType: "black", points: 0, cost: { white: 1, blue: 1, green: 1 } },
   { gemType: "black", points: 1, cost: { red: 3 } },
   { gemType: "black", points: 1, cost: { green: 2, red: 1 } },
-  { gemType: "black", points: 2, cost: { green: 2, red: 2 } },
-  { gemType: "black", points: 2, cost: { white: 1 } },
+  { gemType: "black", points: 1, cost: { green: 2, red: 2 } },
+  { gemType: "black", points: 1, cost: { white: 1 } },
   // Blue cards
   { gemType: "blue", points: 0, cost: { black: 1 } },
   { gemType: "blue", points: 0, cost: { red: 1, black: 1 } },
@@ -71,8 +71,8 @@ const TIER1_CARDS: Array<{
   { gemType: "blue", points: 0, cost: { white: 1, green: 1, black: 1 } },
   { gemType: "blue", points: 1, cost: { black: 3 } },
   { gemType: "blue", points: 1, cost: { green: 1, red: 2 } },
-  { gemType: "blue", points: 2, cost: { green: 2, red: 1 } },
-  { gemType: "blue", points: 2, cost: { white: 3 } },
+  { gemType: "blue", points: 1, cost: { green: 2, red: 1 } },
+  { gemType: "blue", points: 1, cost: { white: 3 } },
   // Red cards
   { gemType: "red", points: 0, cost: { black: 1 } },
   { gemType: "red", points: 0, cost: { black: 1, red: 1 } },
@@ -80,8 +80,8 @@ const TIER1_CARDS: Array<{
   { gemType: "red", points: 0, cost: { white: 1, blue: 1, black: 1 } },
   { gemType: "red", points: 1, cost: { black: 3 } },
   { gemType: "red", points: 1, cost: { blue: 1, green: 2 } },
-  { gemType: "red", points: 2, cost: { blue: 1, black: 2 } },
-  { gemType: "red", points: 2, cost: { blue: 3 } },
+  { gemType: "red", points: 1, cost: { blue: 1, black: 2 } },
+  { gemType: "red", points: 1, cost: { blue: 3 } },
   // Green cards
   { gemType: "green", points: 0, cost: { black: 1 } },
   { gemType: "green", points: 0, cost: { red: 1, black: 1 } },
@@ -89,8 +89,8 @@ const TIER1_CARDS: Array<{
   { gemType: "green", points: 0, cost: { white: 1, blue: 1, black: 1 } },
   { gemType: "green", points: 1, cost: { red: 3 } },
   { gemType: "green", points: 1, cost: { blue: 2, red: 1 } },
-  { gemType: "green", points: 2, cost: { blue: 1, black: 2 } },
-  { gemType: "green", points: 2, cost: { white: 3 } },
+  { gemType: "green", points: 1, cost: { blue: 1, black: 2 } },
+  { gemType: "green", points: 1, cost: { white: 3 } },
 ];
 
 // Tier 2 cards (from official Splendor rules)

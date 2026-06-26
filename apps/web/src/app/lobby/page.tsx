@@ -30,6 +30,17 @@ const gameColors: Record<GameType, string> = {
   [GameType.BLACKJACK]: "from-slate-700 to-slate-900",
 };
 
+const gamePlayerCounts: Record<GameType, string> = {
+  [GameType.CONNECT4]: "2 players",
+  [GameType.ROCK_PAPER_SCISSORS]: "2 players",
+  [GameType.QUORIDOR]: "2 players",
+  [GameType.SEQUENCE]: "2–4 players",
+  [GameType.CATAN]: "2–4 players",
+  [GameType.SPLENDOR]: "2–4 players",
+  [GameType.MONOPOLY_DEAL]: "2–5 players",
+  [GameType.BLACKJACK]: "1–7 players",
+};
+
 export default function LobbyPage() {
   return (
     <Suspense fallback={<LobbyLoadingSkeleton />}>
@@ -79,6 +90,7 @@ function LobbyContent() {
   } = useGameStore();
 
   const [isCreating, setIsCreating] = useState(showCreate || !!preselectedGame);
+  const [isJoiningByCode, setIsJoiningByCode] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [gameFilter, setGameFilter] = useState<GameType | null>(null);
@@ -203,16 +215,10 @@ function LobbyContent() {
             </svg>
           </Button>
           <Button
-            onClick={() => {
-              const roomCode = window.prompt("Enter room code:");
-              if (roomCode && roomCode.trim()) {
-                handleJoinRoom(roomCode.trim().toUpperCase());
-              }
-            }}
+            onClick={() => setIsJoiningByCode(true)}
             variant="secondary"
             size="lg"
             disabled={isConnecting}
-            isLoading={isConnecting}
           >
             Join Room
           </Button>
@@ -303,15 +309,9 @@ function LobbyContent() {
               <p className="text-surface-500 text-sm mb-6">Be the first to create a game!</p>
               <div className="flex gap-3 justify-center">
                 <Button
-                  onClick={() => {
-                    const roomCode = window.prompt("Enter room code:");
-                    if (roomCode && roomCode.trim()) {
-                      handleJoinRoom(roomCode.trim().toUpperCase());
-                    }
-                  }}
+                  onClick={() => setIsJoiningByCode(true)}
                   variant="secondary"
                   disabled={isConnecting}
-                  isLoading={isConnecting}
                 >
                   Join Room
                 </Button>
@@ -346,6 +346,17 @@ function LobbyContent() {
           onCreate={handleCreateRoom}
           isCreating={isConnecting}
           preselectedGame={(preselectedGame as GameType) || undefined}
+        />
+      )}
+
+      {/* Join Room Modal */}
+      {isJoiningByCode && (
+        <JoinRoomModal
+          onClose={() => setIsJoiningByCode(false)}
+          onJoin={(roomCode) => {
+            setIsJoiningByCode(false);
+            router.push(`/game/${roomCode.trim()}`);
+          }}
         />
       )}
     </div>
@@ -559,7 +570,7 @@ function CreateRoomModal({
                     <div className="font-medium text-white group-hover:text-primary-400 transition-colors">
                       {gameLabels[gameType]}
                     </div>
-                    <div className="text-sm text-surface-400">2 players</div>
+                    <div className="text-sm text-surface-400">{gamePlayerCounts[gameType]}</div>
                     {(gameType === GameType.CONNECT4 ||
                       gameType === GameType.ROCK_PAPER_SCISSORS ||
                       gameType === GameType.QUORIDOR ||
@@ -678,6 +689,80 @@ function CreateRoomModal({
             Cancel
           </Button>
         </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function JoinRoomModal({
+  onClose,
+  onJoin,
+}: {
+  onClose: () => void;
+  onJoin: (roomCode: string) => void;
+}) {
+  const [roomCode, setRoomCode] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = roomCode.trim();
+    if (trimmed) {
+      onJoin(trimmed);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      onClose();
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 bg-surface-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Join a Room"
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="card p-6 w-full max-w-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-xl font-display font-semibold mb-2">Join a Room</h2>
+        <p className="text-surface-400 text-sm mb-6">Enter the room code or share link to join</p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="room-code-input" className="text-sm text-surface-400 mb-2 block">
+              Room Code
+            </label>
+            <input
+              id="room-code-input"
+              type="text"
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="e.g. abc-def-ghi"
+              autoFocus
+              autoComplete="off"
+              className="w-full px-4 py-3 rounded-xl bg-surface-800 border border-surface-700 text-white placeholder-surface-500 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-colors"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <Button type="submit" variant="primary" className="flex-1" disabled={!roomCode.trim()}>
+              Join Room
+            </Button>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       </motion.div>
     </motion.div>
   );

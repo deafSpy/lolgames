@@ -12,6 +12,7 @@ export class SplendorBotRoom extends SplendorRoom {
   maxClients = 1; // Only one human player
   private bots: Map<string, SplendorBot> = new Map();
   private botCount = 1; // Number of bots to add
+  private isBotScheduled = false; // Prevents multiple concurrent timer chains (Bug 1)
 
   async onCreate(options: JoinOptions & { botCount?: number }): Promise<void> {
     await super.onCreate(options);
@@ -21,6 +22,11 @@ export class SplendorBotRoom extends SplendorRoom {
 
   onJoin(client: Client, options: { playerName?: string }): void {
     super.onJoin(client, options);
+
+    // SplendorRoom.onJoin() skips BaseRoom.onJoin(), so the human is never added to
+    // initialPlayers. nextTurn() (BaseRoom) uses initialPlayers for rotation, so
+    // without this the human is excluded and the bot always gets the turn.
+    this.initialPlayers.add(client.sessionId);
 
     // Add bots after human joins
     for (let i = 0; i < this.botCount; i++) {
@@ -92,15 +98,30 @@ export class SplendorBotRoom extends SplendorRoom {
     const currentId = this.state.currentTurnId;
     if (!currentId.startsWith("splendor_bot_")) return;
 
+    // Bug 1 fix: prevent multiple concurrent timer chains
+    if (this.isBotScheduled) return;
+    this.isBotScheduled = true;
+
     const bot = this.bots.get(currentId);
-    if (!bot) return;
+    if (!bot) {
+      this.isBotScheduled = false;
+      return;
+    }
 
     // Add delay to make it feel more natural
     const delay = 800 + Math.random() * 500;
 
     this.clock.setTimeout(async () => {
-      if (this.state.status !== "in_progress") return;
-      if (this.state.currentTurnId !== currentId) return;
+      // Keep isBotScheduled = true throughout the entire async operation to prevent
+      // a second concurrent chain from starting during the await bot.getMove() delay.
+      if (this.state.status !== "in_progress") {
+        this.isBotScheduled = false;
+        return;
+      }
+      if (this.state.currentTurnId !== currentId) {
+        this.isBotScheduled = false;
+        return;
+      }
 
       try {
         // Build game state for bot
@@ -109,21 +130,37 @@ export class SplendorBotRoom extends SplendorRoom {
 
         if (!move || typeof move !== "object") {
           logger.error({ botId: currentId, move }, "Bot returned invalid move");
+          this.isBotScheduled = false;
           this.nextTurn();
           this.scheduleBotMove();
           return;
         }
 
-        // Execute bot move
+        // Clear the flag before executing the move so the recursive scheduleBotMove()
+        // at the end can re-acquire it if the bot still has the turn.
+        this.isBotScheduled = false;
+
+        // Execute bot move (internally calls nextTurn() when the turn is complete)
         this.executeBotMove(currentId, move as Record<string, unknown>);
 
-        // Check if next player is also a bot
+        // Bug 4 fix: after executeBotMove, nextTurn() has already run inside the
+        // move handlers, so currentTurnId is now the next player (human = playerIds[0]).
+        // checkWinCondition fires correctly at that point.
+        const winResult = this.checkWinCondition();
+        if (winResult) {
+          await this.endGame(winResult.winner, winResult.isDraw);
+          return;
+        }
+
+        // Continue scheduling if next player is a bot or bot has a multi-step turn
+        // (discard/noble phases keep currentTurnId on the bot until resolved)
         this.scheduleBotMove();
       } catch (error) {
         logger.error(
           { error: error instanceof Error ? error.message : String(error), botId: currentId },
           "Bot move failed"
         );
+        this.isBotScheduled = false;
         // Skip bot turn on error
         this.nextTurn();
         this.scheduleBotMove();

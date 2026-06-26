@@ -1,4 +1,5 @@
 import { GameType } from "@multiplayer/shared";
+import { matchMaker } from "@colyseus/core";
 import { redisService } from "./redis.js";
 import { logger } from "../logger.js";
 
@@ -156,18 +157,65 @@ class LobbyService {
   }
 
   /**
+   * Query Colyseus matchmaker for active rooms and convert to LobbyData format.
+   * Used as the fallback when Redis is unavailable.
+   */
+  private async getLobbiesFromColyseus(filterGameType?: GameType): Promise<LobbyData[]> {
+    try {
+      const rooms = await matchMaker.query({});
+      const result: LobbyData[] = [];
+
+      for (const room of rooms) {
+        // Skip finished rooms and empty rooms
+        if (room.metadata?.status === "finished" || room.clients === 0) {
+          continue;
+        }
+
+        const gameType =
+          (room.metadata?.gameType as GameType) ||
+          (room.name?.replace("_bot", "") as GameType) ||
+          GameType.CONNECT4;
+
+        if (filterGameType && gameType !== filterGameType) {
+          continue;
+        }
+
+        result.push({
+          roomId: room.roomId,
+          gameType,
+          host: room.metadata?.hostName || "Unknown",
+          currentPlayers: room.clients,
+          maxPlayers: room.maxClients,
+          spectatorCount: 0,
+          status: (room.metadata?.status as LobbyData["status"]) || "waiting",
+          vsBot: Boolean(room.metadata?.vsBot),
+          createdAt: room.metadata?.createdAt
+            ? new Date(room.metadata.createdAt as number).toISOString()
+            : new Date().toISOString(),
+          metadata: room.metadata?.roomSlug ? { roomSlug: room.metadata.roomSlug } : {},
+        });
+      }
+
+      return result;
+    } catch (error) {
+      logger.warn({ error }, "Failed to query Colyseus matchmaker for lobby fallback");
+      return [];
+    }
+  }
+
+  /**
    * Get all lobbies for a specific game type
    */
   async getLobbiesByGameType(gameType: GameType): Promise<LobbyData[]> {
     if (!redisService.connected) {
-      return [];
+      return this.getLobbiesFromColyseus(gameType);
     }
 
     try {
       const indexKey = `${this.LOBBIES_INDEX_PREFIX}${gameType}`;
       const client = redisService.getClient();
       if (!client) {
-        return [];
+        return this.getLobbiesFromColyseus(gameType);
       }
 
       const roomIds = await client.smembers(indexKey);
@@ -197,14 +245,14 @@ class LobbyService {
    */
   async getAllLobbies(): Promise<LobbyData[]> {
     if (!redisService.connected) {
-      return [];
+      return this.getLobbiesFromColyseus();
     }
 
     try {
       // Get all lobby keys using pattern matching
       const client = redisService.getClient();
       if (!client) {
-        return [];
+        return this.getLobbiesFromColyseus();
       }
 
       const keys = await client.keys(`${this.LOBBY_PREFIX}*`);

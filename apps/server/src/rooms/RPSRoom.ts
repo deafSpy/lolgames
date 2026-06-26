@@ -11,11 +11,11 @@ interface MoveData {
 
 const VALID_CHOICES: Choice[] = ["rock", "paper", "scissors"];
 const COMMIT_TIME_LIMIT = 10000; // 10 seconds to make a choice
-const REVEAL_DELAY = 800; // faster reveal
+const REVEAL_DELAY = 3500; // allow full 3→2→1→GO countdown (3100ms) plus 400ms buffer
 const NEXT_ROUND_DELAY = 1200; // faster next round
 
 export class RPSRoom extends BaseRoom<RPSState> {
-  maxClients = 2;
+  // maxClients inherits from BaseRoom (100) so spectators can join beyond the 2-player limit
   private commitTimer: Delayed | null = null;
 
   initializeGame(): void {

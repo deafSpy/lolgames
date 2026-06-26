@@ -24,6 +24,8 @@ const QUORIDOR_STARTS: Array<{ x: number; y: number; goalRow: number }> = [
 ];
 
 export class QuoridorRoom extends BaseRoom<QuoridorState> {
+  // maxClients inherits from BaseRoom (100) so spectators can join beyond the seat limit
+
   initializeGame(): void {
     this.setState(new QuoridorState());
     this.state.status = "waiting";
@@ -31,29 +33,51 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
   }
 
   onJoin(client: Client, options: JoinOptions): void {
+    // Determine spectator status before adding to players map
+    const seatsAreFull = this.initialPlayers.size >= this.maxPlayers;
+    const isSpectator =
+      this.state.status === "in_progress" || (this.state.status === "waiting" && seatsAreFull);
+
     const player = new QuoridorPlayer();
     player.id = client.sessionId;
     player.displayName = options.playerName || `Guest_${client.sessionId.slice(0, 4)}`;
     player.isReady = false;
     player.isConnected = true;
     player.joinedAt = Date.now();
-    player.wallsRemaining = 10;
+    player.isSpectator = isSpectator;
+    player.wasInitialPlayer = !isSpectator;
 
-    const playerCount = this.state.players.size;
-    const start = QUORIDOR_STARTS[Math.min(playerCount, QUORIDOR_STARTS.length - 1)];
-    player.x = start.x;
-    player.y = start.y;
-    player.goalRow = start.goalRow;
+    if (!isSpectator) {
+      // Assign starting position based on existing real-player count (excludes spectators)
+      const realPlayerCount = this.initialPlayers.size;
+      const start = QUORIDOR_STARTS[Math.min(realPlayerCount, QUORIDOR_STARTS.length - 1)];
+      player.x = start.x;
+      player.y = start.y;
+      player.goalRow = start.goalRow;
+      player.wallsRemaining = 10;
+
+      if (this.initialPlayers.size === 0 && this.state.status === "waiting") {
+        this.hostSessionId = client.sessionId;
+        player.isHost = true;
+      }
+      this.initialPlayers.add(client.sessionId);
+    }
 
     this.state.players.set(client.sessionId, player);
 
     logger.info(
-      { roomId: this.roomId, playerId: client.sessionId, playerName: player.displayName },
+      {
+        roomId: this.roomId,
+        playerId: client.sessionId,
+        playerName: player.displayName,
+        isSpectator,
+      },
       "Player joined Quoridor"
     );
 
-    if (this.clients.length >= this.maxPlayers) {
-      this.lock();
+    // Send room slug to the joining client
+    if (this.roomSlug) {
+      client.send("room_info", { roomSlug: this.roomSlug });
     }
   }
 
