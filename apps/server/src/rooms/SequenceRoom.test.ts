@@ -6,7 +6,8 @@
 //   - Deals the correct hand size for 4 players (5 cards each)
 //   - checkStartGame blocks until all maxPlayers seats are filled
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
+import { SequenceChip } from "@multiplayer/shared";
 
 vi.mock("../services/lobbyService.js", () => ({
   lobbyService: {
@@ -180,5 +181,165 @@ describe("SequenceRoom 4-player breadth smoke (DEA-69)", () => {
     (room as any).checkStartGame();
 
     expect(startSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ─── DEA-200: BUG-13 — turn management and gameplay fixes ────────────────────
+describe("SequenceRoom turn management (DEA-200)", () => {
+  function make2PlayerRoom() {
+    const room = makeSequenceRoom(2);
+    stubClientsLength(room, 2);
+    room.onJoin({ sessionId: "p1" } as any, { playerName: "P1" });
+    room.onJoin({ sessionId: "p2" } as any, { playerName: "P2" });
+    vi.spyOn(room as any, "setMetadata").mockImplementation(() => {});
+    vi.spyOn(room as any, "broadcast").mockImplementation(() => {});
+    vi.spyOn(room as any, "clock", "get").mockReturnValue({
+      setTimeout: vi.fn(() => ({})),
+    });
+    (room as any).startGame();
+    return room;
+  }
+
+  it("initialPlayers is populated so currentTurnId is set after startGame", () => {
+    const room = make2PlayerRoom();
+    expect(["p1", "p2"]).toContain(room.state.currentTurnId);
+  });
+
+  it("turn advances to the other player after a valid move", () => {
+    const room = make2PlayerRoom();
+
+    const firstTurn = room.state.currentTurnId;
+    const firstPlayer = room.state.players.get(firstTurn) as any;
+
+    // Find a card in hand and a matching board cell
+    const card = firstPlayer.hand[0];
+    const cardStr = `${card.rank}${card.suit.charAt(0).toUpperCase()}`;
+
+    // Build board layout reference (copy from SequenceRoom)
+    const BOARD: string[][] = [
+      ["FREE", "2S", "3S", "4S", "5S", "6S", "7S", "8S", "9S", "FREE"],
+      ["6C", "5C", "4C", "3C", "2C", "AH", "KH", "QH", "10H", "10S"],
+      ["7C", "AS", "2D", "3D", "4D", "5D", "6D", "7D", "9H", "QS"],
+      ["8C", "KS", "6C", "5C", "4C", "3C", "2C", "8D", "8H", "KS"],
+      ["9C", "QS", "7C", "6H", "5H", "4H", "AH", "9D", "7H", "AS"],
+      ["10C", "10S", "8C", "7H", "2H", "3H", "KH", "10D", "6H", "2D"],
+      ["QC", "9S", "9C", "8H", "9H", "10H", "QH", "QD", "5H", "3D"],
+      ["KC", "8S", "10C", "QC", "KC", "AC", "AD", "KD", "4H", "4D"],
+      ["AC", "7S", "6S", "5S", "4S", "3S", "2S", "2H", "3H", "5D"],
+      ["FREE", "AD", "KD", "QD", "10D", "9D", "8D", "7D", "6D", "FREE"],
+    ];
+
+    let boardX = -1,
+      boardY = -1;
+    outer: for (let y = 0; y < 10; y++) {
+      for (let x = 0; x < 10; x++) {
+        if (BOARD[y][x] === cardStr) {
+          boardX = x;
+          boardY = y;
+          break outer;
+        }
+      }
+    }
+
+    // Skip if no board cell found for this card (shouldn't happen but guard)
+    if (boardX === -1) return;
+
+    (room as any).handleMove({ sessionId: firstTurn, send: vi.fn() } as any, {
+      cardIndex: 0,
+      boardX,
+      boardY,
+    });
+
+    const secondTurn = room.state.currentTurnId;
+    expect(secondTurn).not.toBe(firstTurn);
+    expect(["p1", "p2"]).toContain(secondTurn);
+  });
+
+  it("rejects a move to an occupied board position", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+    const firstPlayer = room.state.players.get(firstTurn) as any;
+
+    const card = firstPlayer.hand[0];
+    const cardStr = `${card.rank}${card.suit.charAt(0).toUpperCase()}`;
+    const BOARD: string[][] = [
+      ["FREE", "2S", "3S", "4S", "5S", "6S", "7S", "8S", "9S", "FREE"],
+      ["6C", "5C", "4C", "3C", "2C", "AH", "KH", "QH", "10H", "10S"],
+      ["7C", "AS", "2D", "3D", "4D", "5D", "6D", "7D", "9H", "QS"],
+      ["8C", "KS", "6C", "5C", "4C", "3C", "2C", "8D", "8H", "KS"],
+      ["9C", "QS", "7C", "6H", "5H", "4H", "AH", "9D", "7H", "AS"],
+      ["10C", "10S", "8C", "7H", "2H", "3H", "KH", "10D", "6H", "2D"],
+      ["QC", "9S", "9C", "8H", "9H", "10H", "QH", "QD", "5H", "3D"],
+      ["KC", "8S", "10C", "QC", "KC", "AC", "AD", "KD", "4H", "4D"],
+      ["AC", "7S", "6S", "5S", "4S", "3S", "2S", "2H", "3H", "5D"],
+      ["FREE", "AD", "KD", "QD", "10D", "9D", "8D", "7D", "6D", "FREE"],
+    ];
+    let boardX = -1,
+      boardY = -1;
+    outer: for (let y = 0; y < 10; y++) {
+      for (let x = 0; x < 10; x++) {
+        if (BOARD[y][x] === cardStr) {
+          boardX = x;
+          boardY = y;
+          break outer;
+        }
+      }
+    }
+    if (boardX === -1) return;
+
+    // Place chip manually to occupy position
+    const chip = new SequenceChip();
+    chip.x = boardX;
+    chip.y = boardY;
+    chip.teamId = 1;
+    room.state.chips.push(chip);
+
+    const errorSend = vi.fn();
+    (room as any).handleMove({ sessionId: firstTurn, send: errorSend } as any, {
+      cardIndex: 0,
+      boardX,
+      boardY,
+    });
+
+    expect(errorSend).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ message: "Position already occupied" })
+    );
+    // Turn should not have advanced
+    expect(room.state.currentTurnId).toBe(firstTurn);
+  });
+
+  it("rejects a move on FREE corner", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+    const errorSend = vi.fn();
+    (room as any).handleMove({ sessionId: firstTurn, send: errorSend } as any, {
+      cardIndex: 0,
+      boardX: 0,
+      boardY: 0,
+    });
+    expect(errorSend).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ message: "Cannot play on free corners" })
+    );
+  });
+
+  it("spectators added after seats are full do not get dealt cards", () => {
+    const room = makeSequenceRoom(2);
+    stubClientsLength(room, 2);
+    room.onJoin({ sessionId: "p1" } as any, { playerName: "P1" });
+    room.onJoin({ sessionId: "p2" } as any, { playerName: "P2" });
+    // Third client joins as spectator
+    stubClientsLength(room, 3);
+    room.onJoin({ sessionId: "spec" } as any, { playerName: "Spectator" });
+
+    vi.spyOn(room as any, "setMetadata").mockImplementation(() => {});
+    vi.spyOn(room as any, "broadcast").mockImplementation(() => {});
+    vi.spyOn(room as any, "clock", "get").mockReturnValue({ setTimeout: vi.fn(() => ({})) });
+    (room as any).startGame();
+
+    const spec = room.state.players.get("spec") as any;
+    expect(spec.isSpectator).toBe(true);
+    expect(spec.hand.length).toBe(0);
   });
 });

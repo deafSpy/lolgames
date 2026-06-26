@@ -142,6 +142,8 @@ export class SequenceState extends Schema {
   @type("number") team2Sequences: number = 0;
   @type("number") sequencesToWin: number = 2;
   @type("number") deckRemaining: number = 104; // 2 decks
+  @type("number") discardPileCount: number = 0;
+  @type("string") lastDiscardedCard: string = "";
 }
 
 /**

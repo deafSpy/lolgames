@@ -67,15 +67,31 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
     player.isReady = false;
     player.isConnected = true;
     player.joinedAt = Date.now();
+    player.isHost = false;
 
-    // Assign team based on player count
-    const playerCount = this.state.players.size;
-    player.teamId = playerCount % 2; // Alternating teams for now
+    // Spectator if game already started or all seats are taken
+    const seatsAreFull = this.initialPlayers.size >= this.maxPlayers;
+    const isSpectator =
+      this.state.status === "in_progress" || (this.state.status === "waiting" && seatsAreFull);
+    player.isSpectator = isSpectator;
+    player.wasInitialPlayer = !isSpectator;
+
+    if (!isSpectator && this.state.status === "waiting") {
+      // Assign team based on seat order so teams alternate: 0,1,0,1,...
+      player.teamId = this.initialPlayers.size % 2;
+
+      if (this.initialPlayers.size === 0) {
+        this.hostSessionId = client.sessionId;
+        player.isHost = true;
+      }
+      // Register in initialPlayers so startGame/nextTurn can cycle through them
+      this.initialPlayers.add(client.sessionId);
+    }
 
     this.state.players.set(client.sessionId, player);
 
     logger.info(
-      { roomId: this.roomId, playerId: client.sessionId, teamId: player.teamId },
+      { roomId: this.roomId, playerId: client.sessionId, teamId: player.teamId, isSpectator },
       "Player joined Sequence"
     );
 
@@ -87,11 +103,13 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
   protected startGame(): void {
     super.startGame();
 
-    // Deal cards to each player (7 cards for 2 players, 6 for 3, 5 for 4)
-    const handSize = this.clients.length === 2 ? 7 : this.clients.length === 3 ? 6 : 5;
+    // Deal cards only to seated (initial) players — 7 for 2p, 6 for 3p, 5 for 4p
+    const seatCount = this.initialPlayers.size;
+    const handSize = seatCount === 2 ? 7 : seatCount === 3 ? 6 : 5;
 
-    for (const [, player] of this.state.players) {
-      const p = player as SequencePlayer;
+    for (const sessionId of this.initialPlayers) {
+      const p = this.state.players.get(sessionId) as SequencePlayer | undefined;
+      if (!p) continue;
       for (let i = 0; i < handSize; i++) {
         this.drawCard(p);
       }
@@ -200,6 +218,18 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       this.placeChip(boardX, boardY, player.teamId);
     }
 
+    // Track discard before removing
+    const suitChar =
+      card.suit === "hearts"
+        ? "H"
+        : card.suit === "diamonds"
+          ? "D"
+          : card.suit === "clubs"
+            ? "C"
+            : "S";
+    this.state.lastDiscardedCard = `${card.rank}${suitChar}`;
+    this.state.discardPileCount += 1;
+
     // Remove card from hand
     player.hand.splice(cardIndex, 1);
 
@@ -211,6 +241,9 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       "Sequence move made"
     );
 
+    // Update sequence counts before broadcasting so clients get current state
+    this.checkSequences(player.teamId);
+
     this.broadcast("chip_placed", {
       playerId: client.sessionId,
       boardX,
@@ -218,17 +251,10 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       teamId: player.teamId,
     });
 
-    // Check for sequences
-    this.checkSequences(player.teamId);
-
-    // Check win condition
-    const result = this.checkWinCondition();
-    if (result) {
-      this.endGame(result.winner, result.isDraw);
-      return;
+    // Advance turn only when game continues; BaseRoom.handleMoveMessage handles endGame on win
+    if (!this.checkWinCondition()) {
+      this.nextTurn();
     }
-
-    this.nextTurn();
   }
 
   private placeChip(x: number, y: number, teamId: number): void {

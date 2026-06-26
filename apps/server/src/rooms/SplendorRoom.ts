@@ -63,7 +63,7 @@ const TIER1_CARDS: Array<{
   { gemType: "black", points: 1, cost: { red: 3 } },
   { gemType: "black", points: 1, cost: { green: 2, red: 1 } },
   { gemType: "black", points: 1, cost: { green: 2, red: 2 } },
-  { gemType: "black", points: 1, cost: { white: 1 } },
+  { gemType: "black", points: 0, cost: { white: 1 } },
   // Blue cards
   { gemType: "blue", points: 0, cost: { black: 1 } },
   { gemType: "blue", points: 0, cost: { red: 1, black: 1 } },
@@ -332,6 +332,10 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     this.state.phase = "take_gems";
 
     const playerIds = Array.from(this.state.players.keys());
+    // Sync initialPlayers so BaseRoom.nextTurn() can rotate correctly.
+    // SplendorRoom.onJoin() bypasses BaseRoom.onJoin(), so initialPlayers is
+    // empty unless we populate it here (same pattern as CatanRoom).
+    this.initialPlayers = new Set(playerIds);
     this.state.currentTurnId = playerIds[0];
     this.state.turnStartedAt = Date.now();
 

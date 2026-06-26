@@ -76,6 +76,15 @@ export class BlackjackBotRoom extends BlackjackRoom {
     this.scheduleBotAction();
   }
 
+  protected startNextHand(): void {
+    super.startNextHand();
+    // startBettingPhase() has set currentTurnId; if it's a bot's turn to bet,
+    // trigger the bot now. Without this call the bot never bets on hands 2+
+    // because startNextHand fires via clock.setTimeout (not a player action),
+    // so scheduleBotAction is not called anywhere else.
+    this.scheduleBotAction();
+  }
+
   handleMove(client: Client, data: unknown): void {
     super.handleMove(client, data);
 

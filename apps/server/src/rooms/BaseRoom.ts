@@ -571,10 +571,15 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     // Delegate to game-specific handler
     this.handleMove(client, data);
 
-    // Check for win condition
-    const result = this.checkWinCondition();
-    if (result) {
-      await this.endGame(result.winner, result.isDraw);
+    // Check for win condition — only if the game is still running.
+    // Some rooms (e.g. BlackjackRoom) call checkWinCondition + endGame
+    // internally during handleMove, so we guard here to prevent a second
+    // endGame call that would double-broadcast game_ended.
+    if (this.state.status === "in_progress") {
+      const result = this.checkWinCondition();
+      if (result) {
+        await this.endGame(result.winner, result.isDraw);
+      }
     }
   }
 

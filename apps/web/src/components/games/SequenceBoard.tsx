@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { motion } from "framer-motion";
+import { useState, useRef, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface SequenceCard {
   suit: string;
@@ -24,6 +24,9 @@ interface SequenceBoardProps {
   team1Sequences: number;
   team2Sequences: number;
   sequencesToWin: number;
+  deckRemaining: number;
+  discardPileCount: number;
+  lastDiscardedCard?: string;
   isMyTurn: boolean;
   onPlayCard: (cardIndex: number, boardX: number, boardY: number) => void;
   disabled?: boolean;
@@ -43,15 +46,13 @@ const BOARD_LAYOUT = [
   ["⭐", "A♦", "K♦", "Q♦", "10♦", "9♦", "8♦", "7♦", "6♦", "⭐"],
 ];
 
-// Suit colors for text (custom hex colors)
 const SUIT_TEXT_COLORS = {
-  "♥": "#fa2315", // Hearts - red
-  "♦": "#e18400", // Diamonds - orange
-  "♣": "#0081e6", // Clubs - blue
-  "♠": "#3a17b3", // Spades - purple
+  "♥": "#fa2315",
+  "♦": "#e18400",
+  "♣": "#0081e6",
+  "♠": "#3a17b3",
 } as const;
 
-// Get suit from card notation
 const getSuitFromCard = (card: string): string => {
   if (card.includes("♥")) return "♥";
   if (card.includes("♦")) return "♦";
@@ -60,11 +61,6 @@ const getSuitFromCard = (card: string): string => {
   return "";
 };
 
-// Check if a card is a jack and determine if it's one-eyed or two-eyed.
-// One-eyed jacks: Jack of Hearts, Jack of Spades
-// Two-eyed jacks: Jack of Diamonds, Jack of Clubs
-// Overloaded so both the hand item shape ({rank, suit}) and the board layout
-// shape (raw cell strings like "J♥") can share the same helper.
 function getJackType(card: string): "one-eyed" | "two-eyed" | null;
 function getJackType(card: { rank: string; suit: string }): "one-eyed" | "two-eyed" | null;
 function getJackType(
@@ -78,6 +74,24 @@ function getJackType(
   return card.suit === "hearts" || card.suit === "spades" ? "one-eyed" : "two-eyed";
 }
 
+// Parse a raw card string like "10H" or "AS" into display parts
+function parseRawCard(raw: string): { rank: string; suit: string; suitSymbol: string } | null {
+  if (!raw) return null;
+  const suitChar = raw.slice(-1);
+  const rank = raw.slice(0, -1);
+  const suitMap: Record<string, string> = { H: "♥", D: "♦", C: "♣", S: "♠" };
+  const suitSymbol = suitMap[suitChar] ?? "";
+  return { rank, suit: suitChar, suitSymbol };
+}
+
+// Animated flying card that travels from origin rect to destination rect
+interface FlyingCard {
+  id: string;
+  card: SequenceCard;
+  fromRect: DOMRect;
+  toRect: DOMRect;
+}
+
 export function SequenceBoard({
   chips,
   hand,
@@ -87,27 +101,33 @@ export function SequenceBoard({
   team1Sequences,
   team2Sequences,
   sequencesToWin,
+  deckRemaining,
+  discardPileCount,
+  lastDiscardedCard,
   isMyTurn,
   onPlayCard,
   disabled = false,
 }: SequenceBoardProps) {
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
+  const [flyingCards, setFlyingCards] = useState<FlyingCard[]>([]);
+
+  const discardRef = useRef<HTMLDivElement>(null);
+  const deckRef = useRef<HTMLDivElement>(null);
+  const handCardRefs = useRef<Map<number, HTMLButtonElement | null>>(new Map());
 
   const getChipAt = (x: number, y: number) => {
     return chips.find((c) => c.x === x && c.y === y);
   };
 
-  // Check if a board position is valid for the selected card
   const isValidForSelectedCard = (x: number, y: number) => {
     if (selectedCard === null) return false;
 
     const boardCell = BOARD_LAYOUT[y][x];
-    if (boardCell === "⭐") return false; // Free spaces can't be played on
+    if (boardCell === "⭐") return false;
 
     const selectedCardData = hand[selectedCard];
     if (!selectedCardData) return false;
 
-    // Convert card to board format (rank + suit)
     const cardRank = selectedCardData.rank;
     const cardSuit =
       selectedCardData.suit === "hearts"
@@ -119,16 +139,36 @@ export function SequenceBoard({
             : "♠";
 
     const cardNotation = cardRank + cardSuit;
-
     return boardCell === cardNotation;
   };
 
+  const launchCardToDiscard = useCallback((cardIndex: number, playedCard: SequenceCard) => {
+    const cardEl = handCardRefs.current.get(cardIndex);
+    const discardEl = discardRef.current;
+    if (!cardEl || !discardEl) return;
+
+    const fromRect = cardEl.getBoundingClientRect();
+    const toRect = discardEl.getBoundingClientRect();
+    const id = `fly-${Date.now()}-${cardIndex}`;
+
+    setFlyingCards((prev) => [...prev, { id, card: playedCard, fromRect, toRect }]);
+
+    // Remove flying card after animation completes
+    setTimeout(() => {
+      setFlyingCards((prev) => prev.filter((f) => f.id !== id));
+    }, 500);
+  }, []);
+
   const handleCellClick = (x: number, y: number) => {
     if (selectedCard !== null && isMyTurn && !disabled) {
+      const playedCard = hand[selectedCard];
+      launchCardToDiscard(selectedCard, playedCard);
       onPlayCard(selectedCard, x, y);
       setSelectedCard(null);
     }
   };
+
+  const discardedCard = lastDiscardedCard ? parseRawCard(lastDiscardedCard) : null;
 
   return (
     <div className="flex flex-col items-center">
@@ -162,6 +202,59 @@ export function SequenceBoard({
         ) : (
           <span className="text-surface-400">Waiting for other player...</span>
         )}
+      </div>
+
+      {/* Deck + Discard widgets */}
+      <div className="mb-4 flex items-center gap-6">
+        {/* Deck */}
+        <div ref={deckRef} className="flex flex-col items-center gap-1">
+          <div className="w-12 h-16 rounded-lg bg-surface-700 border-2 border-surface-500 flex items-center justify-center shadow-md">
+            <span className="text-xl">🂠</span>
+          </div>
+          <div className="text-xs text-surface-400">
+            Deck: <span className="text-white font-semibold">{deckRemaining}</span>
+          </div>
+        </div>
+
+        {/* Discard pile */}
+        <div ref={discardRef} className="flex flex-col items-center gap-1">
+          <div className="w-12 h-16 rounded-lg bg-white border-2 border-surface-400 flex flex-col items-center justify-center shadow-md relative overflow-hidden">
+            {discardedCard ? (
+              <>
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={lastDiscardedCard}
+                    initial={{ rotateY: 90, opacity: 0 }}
+                    animate={{ rotateY: 0, opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="flex flex-col items-center"
+                  >
+                    <span className="text-black text-xs font-bold leading-none">
+                      {discardedCard.rank}
+                    </span>
+                    <span
+                      className="text-base font-bold leading-none"
+                      style={{
+                        color:
+                          SUIT_TEXT_COLORS[
+                            discardedCard.suitSymbol as keyof typeof SUIT_TEXT_COLORS
+                          ],
+                      }}
+                    >
+                      {discardedCard.suitSymbol}
+                    </span>
+                  </motion.div>
+                </AnimatePresence>
+              </>
+            ) : (
+              <span className="text-surface-400 text-xs">—</span>
+            )}
+          </div>
+          <div className="text-xs text-surface-400">
+            Discard: <span className="text-white font-semibold">{discardPileCount}</span>
+          </div>
+        </div>
       </div>
 
       {/* Board */}
@@ -248,6 +341,9 @@ export function SequenceBoard({
             return (
               <motion.button
                 key={index}
+                ref={(el) => {
+                  handCardRefs.current.set(index, el);
+                }}
                 whileHover={{ y: -4 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setSelectedCard(selectedCard === index ? null : index)}
@@ -311,6 +407,56 @@ export function SequenceBoard({
         </span>
         )
       </div>
+
+      {/* Flying card animations (portal-like, fixed overlay) */}
+      <AnimatePresence>
+        {flyingCards.map(({ id, card, fromRect, toRect }) => {
+          const suitSymbol =
+            card.suit === "hearts"
+              ? "♥"
+              : card.suit === "diamonds"
+                ? "♦"
+                : card.suit === "clubs"
+                  ? "♣"
+                  : "♠";
+          const suitColor = SUIT_TEXT_COLORS[suitSymbol as keyof typeof SUIT_TEXT_COLORS];
+
+          return (
+            <motion.div
+              key={id}
+              initial={{
+                position: "fixed",
+                left: fromRect.left,
+                top: fromRect.top,
+                width: fromRect.width,
+                height: fromRect.height,
+                zIndex: 9999,
+                opacity: 1,
+                scale: 1,
+                rotate: 0,
+              }}
+              animate={{
+                left: toRect.left,
+                top: toRect.top,
+                width: toRect.width,
+                height: toRect.height,
+                opacity: 0,
+                scale: 0.8,
+                rotate: 15,
+              }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4, ease: "easeIn" }}
+              style={{ pointerEvents: "none" }}
+              className="rounded-lg bg-white flex flex-col items-center justify-center shadow-xl"
+            >
+              <span className="text-black text-xs font-bold">{card.rank}</span>
+              <span className="text-base font-bold" style={{ color: suitColor }}>
+                {suitSymbol}
+              </span>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
     </div>
   );
 }

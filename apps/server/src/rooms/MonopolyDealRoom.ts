@@ -298,6 +298,12 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
 
     this.state.players.set(client.sessionId, player);
 
+    // BUG-14 fix: populate initialPlayers so BaseRoom.nextTurn() can cycle turns.
+    // Without this, nextTurn() returns early (initialPlayerIds.length === 0).
+    if (this.state.status === "waiting") {
+      this.initialPlayers.add(client.sessionId);
+    }
+
     logger.info(
       { roomId: this.roomId, playerId: client.sessionId, playerName: player.displayName },
       "Player joined Monopoly Deal"
@@ -321,8 +327,12 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.state.status = "in_progress";
     this.state.phase = "draw";
 
-    const playerIds = Array.from(this.state.players.keys());
-    this.state.currentTurnId = playerIds[0];
+    // Sync initialPlayers so BaseRoom.nextTurn() can rotate correctly.
+    // MonopolyDealRoom.onJoin() bypasses BaseRoom.onJoin(), so initialPlayers
+    // is empty unless we populate it here (same pattern as CatanRoom).
+    this.initialPlayers = new Set(this.state.players.keys());
+    const playerIds = Array.from(this.initialPlayers);
+    this.state.currentTurnId = playerIds[Math.floor(Math.random() * playerIds.length)];
     this.state.turnStartedAt = Date.now();
 
     // Set actions remaining for first player
@@ -334,6 +344,37 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     logger.info({ roomId: this.roomId }, "Monopoly Deal game started");
     this.broadcast("game_started", { firstPlayer: this.state.currentTurnId });
     this.startTurnTimer();
+  }
+
+  // BUG-14 fix: respond and pay come from the *target* player, not the current-turn
+  // player. BaseRoom.handleMoveMessage blocks any move from a non-currentTurnId
+  // client, so we override it to relax that guard for those two actions only.
+  protected async handleMoveMessage(client: Client, data: unknown): Promise<void> {
+    const movingPlayer = this.state.players.get(client.sessionId);
+    if (movingPlayer?.isSpectator) {
+      client.send("error", { message: "Spectators cannot make moves" });
+      return;
+    }
+
+    if (this.state.status !== "in_progress") {
+      client.send("error", { message: "Game is not in progress" });
+      return;
+    }
+
+    const moveData = data as ActionData;
+    const isOutOfTurnAction = moveData?.action === "respond" || moveData?.action === "pay";
+
+    if (!isOutOfTurnAction && this.state.currentTurnId !== client.sessionId) {
+      client.send("error", { message: "Not your turn" });
+      return;
+    }
+
+    this.handleMove(client, data);
+
+    const result = this.checkWinCondition();
+    if (result) {
+      await this.endGame(result.winner, result.isDraw);
+    }
   }
 
   handleMove(client: Client, data: unknown): void {
@@ -559,6 +600,17 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
         break;
       case "hotel":
         this.executeHotel(client, player, card, cardIndex, data);
+        break;
+      case "double_the_rent":
+        // Must follow a rent card; standalone play discards it as a $1 action
+        player.hand.splice(cardIndex, 1);
+        this.state.discardPile.push(card);
+        player.actionsRemaining--;
+        this.broadcast("action_played", {
+          playerId: client.sessionId,
+          actionType: "double_the_rent",
+        });
+        this.checkEndTurn(client, player);
         break;
       default:
         if (card.cardType === "rent") {
@@ -1143,13 +1195,16 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     );
 
     if (!anyDebtRemaining) {
+      // BUG-14 fix: reset phase from "pay" to "play" so the current-turn player
+      // can continue their remaining actions after all debts are settled.
+      this.state.phase = "play";
       const currentPlayer = this.state.players.get(
         this.state.currentTurnId
       ) as MonopolyDealPlayerSchema;
-      this.checkEndTurn(
-        this.clients.find((c) => c.sessionId === this.state.currentTurnId)!,
-        currentPlayer
-      );
+      const currentClient = this.clients.find((c) => c.sessionId === this.state.currentTurnId);
+      if (currentClient && currentPlayer) {
+        this.checkEndTurn(currentClient, currentPlayer);
+      }
     }
   }
 
@@ -1289,15 +1344,18 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
       return;
     }
 
-    // If no actions remaining or passed, check for discard
-    if (player.actionsRemaining <= 0 || this.state.phase === "play") {
+    // Only evaluate turn-end when the player has exhausted their actions.
+    // BUG-14 fix: the old condition `actionsRemaining <= 0 || phase === "play"`
+    // entered the discard-check block after every single play-phase action,
+    // prematurely triggering discard phase while actions were still remaining.
+    if (player.actionsRemaining <= 0) {
       if (player.hand.length > 7) {
         this.state.phase = "discard";
         this.broadcast("must_discard", {
           playerId: client.sessionId,
           count: player.hand.length - 7,
         });
-      } else if (player.actionsRemaining <= 0) {
+      } else {
         this.endTurn(client.sessionId);
       }
     }

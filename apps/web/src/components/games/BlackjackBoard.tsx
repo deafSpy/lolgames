@@ -246,10 +246,16 @@ export function BlackjackBoard({
             {dealerHand.map((card, idx) => (
               <motion.div
                 key={idx}
-                initial={{ opacity: 0, y: -30 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{
+                  opacity: 0,
+                  y: -80,
+                  x: (idx - Math.floor(dealerHand.length / 2)) * 8,
+                  scale: 0.6,
+                  rotate: idx % 2 === 0 ? -12 : 12,
+                }}
+                animate={{ opacity: 1, y: 0, x: 0, scale: 1, rotate: 0 }}
                 exit={{ opacity: 0, scale: 0.5 }}
-                transition={{ delay: idx * 0.15, type: "spring", stiffness: 250, damping: 20 }}
+                transition={{ delay: idx * 0.12, type: "spring", stiffness: 260, damping: 22 }}
               >
                 <PlayingCard card={card} />
               </motion.div>
@@ -394,9 +400,19 @@ export function BlackjackBoard({
                             {hand.cards.map((card, cardIdx) => (
                               <motion.div
                                 key={cardIdx}
-                                initial={{ opacity: 0, x: -40 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: cardIdx * 0.12, type: "spring" }}
+                                initial={{
+                                  opacity: 0,
+                                  y: -160,
+                                  scale: 0.6,
+                                  rotate: cardIdx % 2 === 0 ? -10 : 10,
+                                }}
+                                animate={{ opacity: 1, y: 0, scale: 1, rotate: 0 }}
+                                transition={{
+                                  delay: cardIdx * 0.12,
+                                  type: "spring",
+                                  stiffness: 260,
+                                  damping: 22,
+                                }}
                               >
                                 <PlayingCard card={card} />
                               </motion.div>
@@ -448,17 +464,8 @@ export function BlackjackBoard({
               )}
 
               {/* Payout */}
-              {isPayoutPhase && myPlayer.roundWinnings > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.85 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="mt-4 p-4 bg-success/15 rounded-xl border border-success/30 text-center"
-                >
-                  <span className="text-3xl mb-2 block">🎉</span>
-                  <span className="text-success text-2xl font-black">
-                    +${myPlayer.roundWinnings}
-                  </span>
-                </motion.div>
+              {isPayoutPhase && myPlayer.hands.length > 0 && (
+                <PayoutDisplay roundWinnings={myPlayer.roundWinnings} handNumber={handNumber} />
               )}
             </>
           )}
@@ -809,6 +816,94 @@ function PlayerSeat({
         </div>
       )}
     </div>
+  );
+}
+
+// Payout display with flying chip animations
+function PayoutDisplay({
+  roundWinnings,
+  handNumber,
+}: {
+  roundWinnings: number;
+  handNumber: number;
+}) {
+  const isWin = roundWinnings > 0;
+  const isLoss = roundWinnings < 0;
+  const chipCount = Math.min(Math.max(Math.ceil(Math.abs(roundWinnings) / 100), 2), 5);
+
+  return (
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={`payout-${handNumber}`}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className={`mt-4 p-4 rounded-xl border text-center ${
+          isWin
+            ? "bg-success/15 border-success/30"
+            : isLoss
+              ? "bg-error/15 border-error/30"
+              : "bg-surface-700/60 border-surface-600/40"
+        }`}
+      >
+        {/* Flying chip row — overflow-hidden so chips clip at edge during travel */}
+        <div className="relative h-12 mb-2" style={{ overflow: "hidden" }}>
+          {Array.from({ length: chipCount }, (_, i) => {
+            const offset = (i - Math.floor(chipCount / 2)) * 22;
+            const chip = CHIP_COLORS[Math.min(i + 3, CHIP_COLORS.length - 1)];
+            return (
+              <motion.div
+                key={i}
+                className="absolute top-2"
+                style={{ left: `calc(50% + ${offset}px - 16px)` }}
+                initial={
+                  isWin ? { y: -52, opacity: 0, scale: 0.4 } : { y: 0, opacity: 1, scale: 1 }
+                }
+                animate={
+                  isWin ? { y: 0, opacity: 1, scale: 1 } : { y: -52, opacity: 0, scale: 0.4 }
+                }
+                transition={{ delay: i * 0.08, type: "spring", stiffness: 220, damping: 20 }}
+              >
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg border-2 border-white/30"
+                  style={{ backgroundColor: chip.color, color: chip.textColor }}
+                >
+                  $
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+
+        <motion.div
+          initial={{ scale: 0.5, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{
+            delay: chipCount * 0.08 + 0.05,
+            type: "spring",
+            stiffness: 280,
+            damping: 20,
+          }}
+        >
+          {isWin ? (
+            <>
+              <span className="text-3xl mb-2 block">🎉</span>
+              <span className="text-success text-2xl font-black">+${roundWinnings}</span>
+            </>
+          ) : isLoss ? (
+            <>
+              <span className="text-2xl block mb-1">💸</span>
+              <span className="text-error text-xl font-black">-${Math.abs(roundWinnings)}</span>
+            </>
+          ) : (
+            <>
+              <span className="text-2xl block mb-1">🤝</span>
+              <span className="text-surface-300 text-xl font-black">Push</span>
+            </>
+          )}
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 }
 

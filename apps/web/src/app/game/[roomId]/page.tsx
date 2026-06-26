@@ -96,6 +96,8 @@ interface GameState {
   team1Sequences?: number;
   team2Sequences?: number;
   sequencesToWin?: number;
+  discardPileCount?: number;
+  lastDiscardedCard?: string;
   // Catan specific
   tiles?: Array<{ q: number; r: number; tileType: string; number: number; hasRobber: boolean }>;
   vertices?: Map<string, { id: string; building: string; playerId: string }>;
@@ -392,6 +394,8 @@ export default function GameRoomPage() {
       plainState.team2Sequences = s.team2Sequences;
       plainState.sequencesToWin = s.sequencesToWin;
       plainState.deckRemaining = s.deckRemaining;
+      plainState.discardPileCount = s.discardPileCount;
+      plainState.lastDiscardedCard = s.lastDiscardedCard;
     } else if (normalized === GameType.CATAN) {
       if (s.tiles) {
         plainState.tiles = Array.from(
@@ -1359,6 +1363,9 @@ export default function GameRoomPage() {
                   team1Sequences={gameState.team1Sequences || 0}
                   team2Sequences={gameState.team2Sequences || 0}
                   sequencesToWin={gameState.sequencesToWin || 2}
+                  deckRemaining={gameState.deckRemaining ?? 104}
+                  discardPileCount={gameState.discardPileCount ?? 0}
+                  lastDiscardedCard={gameState.lastDiscardedCard}
                   isMyTurn={isMyTurn}
                   onPlayCard={handleSequenceMove}
                 />

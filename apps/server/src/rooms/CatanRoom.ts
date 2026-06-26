@@ -209,8 +209,9 @@ export class CatanRoom extends BaseRoom<CatanState> {
     this.state.phase = "setup";
     this.state.setupRound = 1;
 
-    // Set player order
+    // Set player order and sync initialPlayers so BaseRoom helpers (nextTurn, endGame) work correctly
     this.playerOrder = Array.from(this.state.players.keys());
+    this.initialPlayers = new Set(this.playerOrder);
     this.state.currentTurnId = this.playerOrder[0];
     this.state.turnStartedAt = Date.now();
 
@@ -517,12 +518,6 @@ export class CatanRoom extends BaseRoom<CatanState> {
         this.broadcast("city_built", { playerId: client.sessionId, vertexId: data.vertexId });
         break;
       }
-    }
-
-    // Check win after building
-    const result = this.checkWinCondition();
-    if (result) {
-      this.endGame(result.winner, result.isDraw);
     }
   }
 

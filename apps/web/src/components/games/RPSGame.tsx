@@ -53,7 +53,6 @@ export function RPSGame({
   const [timeRemaining, setTimeRemaining] = useState<number>(turnTimeLimit);
   const [countdownStep, setCountdownStep] = useState<CountdownStep>(null);
   const [handsVisible, setHandsVisible] = useState(false);
-  const timerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
   const prevPhaseRef = useRef<string>("");
 
   const isPlayer1 = playerId === player1Id;
@@ -69,37 +68,53 @@ export function RPSGame({
 
   // Kick off countdown when phase first transitions to "reveal"
   useEffect(() => {
-    const entering = phase === "reveal" && prevPhaseRef.current !== "reveal";
-
-    if (entering) {
-      setHandsVisible(false);
-      timerRefs.current.forEach(clearTimeout);
-      timerRefs.current = [];
-
-      setCountdownStep(3);
-      timerRefs.current.push(setTimeout(() => setCountdownStep(2), 800));
-      timerRefs.current.push(setTimeout(() => setCountdownStep(1), 1600));
-      timerRefs.current.push(setTimeout(() => setCountdownStep("GO"), 2400));
-      timerRefs.current.push(
-        setTimeout(() => {
-          setCountdownStep(null);
-          setHandsVisible(true);
-        }, 3100)
-      );
-    }
-
     if (phase !== "reveal" && phase !== "result") {
       setHandsVisible(false);
       setCountdownStep(null);
+      prevPhaseRef.current = phase;
+      return;
     }
 
     if (phase === "result") {
       setHandsVisible(true);
+      prevPhaseRef.current = phase;
+      return;
     }
 
+    // phase === "reveal"
+    const prevPhase = prevPhaseRef.current;
     prevPhaseRef.current = phase;
+    const entering = prevPhase !== "reveal";
 
-    return () => timerRefs.current.forEach(clearTimeout);
+    if (!entering) return;
+
+    setHandsVisible(false);
+    setCountdownStep(3);
+
+    let cancelled = false;
+    const ids: ReturnType<typeof setTimeout>[] = [
+      setTimeout(() => {
+        if (!cancelled) setCountdownStep(2);
+      }, 800),
+      setTimeout(() => {
+        if (!cancelled) setCountdownStep(1);
+      }, 1600),
+      setTimeout(() => {
+        if (!cancelled) setCountdownStep("GO");
+      }, 2400),
+      setTimeout(() => {
+        if (!cancelled) {
+          setCountdownStep(null);
+          setHandsVisible(true);
+        }
+      }, 3100),
+    ];
+
+    return () => {
+      cancelled = true;
+      prevPhaseRef.current = prevPhase; // restore so StrictMode re-run re-detects the transition
+      ids.forEach(clearTimeout);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
