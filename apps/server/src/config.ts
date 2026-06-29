@@ -58,6 +58,10 @@ export const config = {
     maxPlayersPerRoom: parseInt(process.env.MAX_PLAYERS_PER_ROOM || "4", 10),
     roomDisposeTimeout: parseInt(process.env.ROOM_DISPOSE_TIMEOUT || "60000", 10),
     reconnectTimeout: parseInt(process.env.RECONNECT_TIMEOUT || "60000", 10),
+    // Bot turn watchdog — force-advance if bot hasn't acted within this window
+    botTurnTimeoutMs: parseInt(process.env.BOT_TURN_TIMEOUT_MS || "10000", 10),
+    // How many consecutive turns the same bot can hold before the watchdog force-advances
+    botMaxConsecutiveTurns: parseInt(process.env.BOT_MAX_CONSECUTIVE_TURNS || "3", 10),
   },
 
   // Logging

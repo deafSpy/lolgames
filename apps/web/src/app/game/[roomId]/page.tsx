@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import SlugResolverClient from "./SlugResolverClient";
 
 // Colyseus room IDs are short alphanumeric strings with no hyphens (e.g. "lhRbN7LVs").
@@ -57,6 +57,7 @@ interface PlayerInfo {
   wasInitialPlayer: boolean;
   isConnected: boolean;
   isHost?: boolean;
+  botDifficulty?: string;
   wallsRemaining?: number;
   x?: number;
   y?: number;
@@ -222,6 +223,8 @@ function normalizeGameType(name?: string): GameType | null {
 export default function GameRoomPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const botDifficulty = searchParams.get("difficulty") as "easy" | "medium" | "hard" | null;
   const roomId = params.roomId as string;
 
   const {
@@ -254,6 +257,7 @@ export default function GameRoomPage() {
   const explicitLeaveRef = useRef(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [victoryModalOpen, setVictoryModalOpen] = useState(false);
+  const [showDifficultyPicker, setShowDifficultyPicker] = useState(false);
 
   // Helper function to register message handlers
   const registerMessageHandlers = useCallback(
@@ -702,6 +706,7 @@ export default function GameRoomPage() {
   }, [roomId, playerName, router]);
 
   const resolvedGameType = gameType || normalizeGameType(room?.name);
+  const isBotRoom = room?.name?.includes("_bot") || false;
   const isWaiting = gameState?.status === "waiting";
   const isPlaying = gameState?.status === "in_progress";
   const isFinished = gameState?.status === "finished";
@@ -755,32 +760,9 @@ export default function GameRoomPage() {
     console.log("GameRoomPage state update:", debugTurnInfo);
   }, [gameState?.status, gameState?.currentTurnId, playerId]);
 
-  // Auto-ready for 1v1 bot games only (RPS, Connect4, Quoridor)
-  // Multi-bot games (Sequence, Blackjack, Splendor, MonopolyDeal) require manual ready
-  useEffect(() => {
-    if (!room || !gameState || isSpectator) return;
-    if (gameState.status !== "waiting") return;
-
-    // Check if there's exactly one bot (1v1 game)
-    const players = gameState.players ? Array.from(gameState.players.values()) : [];
-    const botPlayers = players.filter((p) => p.isBot);
-    const humanPlayers = players.filter((p) => !p.isBot);
-
-    // Only auto-ready if exactly 1 bot and 1 human (1v1 games)
-    const is1v1BotGame = botPlayers.length === 1 && humanPlayers.length === 1;
-
-    // Check if we're not already ready
-    const me = gameState.players?.get(playerId || "");
-    const alreadyReady = me?.isReady;
-
-    if (is1v1BotGame && !alreadyReady) {
-      console.log("Auto-readying for 1v1 bot game");
-      // Small delay for smooth transition (400ms matches the loading animation)
-      setTimeout(() => {
-        room.send("ready");
-      }, 400);
-    }
-  }, [room, gameState, isSpectator, playerId]);
+  // Bot games no longer auto-ready — the bot lobby lets players click "Start Game"
+  // before the match begins (DEA-219). Auto-ready was removed to give players the
+  // intentional lobby moment before committing to a game.
 
   // When the game ends, the reconnect token is no longer useful. Clear it so
   // the player doesn't accidentally reconnect to a finished room on next visit.
@@ -945,15 +927,20 @@ export default function GameRoomPage() {
     clearSession();
 
     try {
-      const isBotRoom = room?.name?.includes("_bot");
+      const isReplayingBotRoom = room?.name?.includes("_bot");
       let newRoomId: string | null = null;
-      if (isBotRoom) {
-        newRoomId = await createBotRoom(targetGame, "medium");
+      const replayDifficulty = (botDifficulty ?? "medium") as "easy" | "medium" | "hard";
+      if (isReplayingBotRoom) {
+        newRoomId = await createBotRoom(targetGame, replayDifficulty);
       } else {
         newRoomId = await createRoom(targetGame);
       }
       if (newRoomId) {
-        router.push(`/game/${newRoomId}`);
+        router.push(
+          isReplayingBotRoom
+            ? `/game/${newRoomId}?difficulty=${replayDifficulty}`
+            : `/game/${newRoomId}`
+        );
       }
     } finally {
       setIsReplaying(false);
@@ -1120,8 +1107,112 @@ export default function GameRoomPage() {
             </div>
           )}
 
-          {/* Waiting state */}
-          {isWaiting && gameState && (
+          {/* Waiting state — bot room lobby */}
+          {isWaiting && gameState && isBotRoom && (
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 max-w-md mx-auto py-8">
+              {/* Back link */}
+              <Link
+                href="/lobby"
+                className="inline-flex items-center gap-1.5 text-sm text-surface-400 hover:text-primary-400 transition-colors mb-6"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 19l-7-7 7-7"
+                  />
+                </svg>
+                Back to Lobby
+              </Link>
+
+              {/* Header */}
+              <div className="text-center mb-8">
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center mx-auto mb-4">
+                  <svg
+                    className="w-10 h-10 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2"
+                    />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-display font-bold mb-1">
+                  {resolvedGameType ? (gameLabels[resolvedGameType] ?? resolvedGameType) : "Game"}{" "}
+                  vs Bots
+                </h2>
+                <p className="text-surface-400 text-sm">Review your lineup and start when ready</p>
+              </div>
+
+              {/* Player slots */}
+              <div className="mb-8">
+                <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-3">
+                  Players
+                </h3>
+                <div className="space-y-2">
+                  {players
+                    .filter((p) => !p.isSpectator)
+                    .map((player, index) => (
+                      <motion.div
+                        key={player.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.08 }}
+                        className="flex items-center gap-3 p-3 bg-surface-800 rounded-xl"
+                      >
+                        <div
+                          className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg flex-shrink-0 ${
+                            player.isBot
+                              ? "bg-gradient-to-br from-purple-500 to-pink-500"
+                              : "bg-gradient-to-br from-primary-500 to-accent-500"
+                          }`}
+                        >
+                          {player.isBot ? "🤖" : player.displayName.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-white truncate">{player.displayName}</p>
+                          <p className="text-xs text-surface-400">
+                            {player.isBot
+                              ? botDifficulty
+                                ? `${botDifficulty.charAt(0).toUpperCase() + botDifficulty.slice(1)} difficulty`
+                                : "Bot"
+                              : "You"}
+                          </p>
+                        </div>
+                        {player.isBot && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 flex-shrink-0">
+                            Bot
+                          </span>
+                        )}
+                        {!player.isBot && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-300 flex-shrink-0">
+                            You
+                          </span>
+                        )}
+                      </motion.div>
+                    ))}
+                </div>
+              </div>
+
+              {/* Start button */}
+              {!isSpectator && (
+                <Button onClick={handleReady} variant="primary" size="lg" className="w-full">
+                  {players.find((p) => p.id === playerId)?.isReady
+                    ? "Waiting for game to start..."
+                    : "Start Game"}
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Waiting state — human room lobby */}
+          {isWaiting && gameState && !isBotRoom && (
             <div className="text-center py-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
               <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center mx-auto mb-6">
                 <svg
@@ -1187,7 +1278,10 @@ export default function GameRoomPage() {
                                 )}
                                 {player.isBot && (
                                   <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">
-                                    Bot
+                                    {player.botDifficulty
+                                      ? player.botDifficulty.charAt(0).toUpperCase() +
+                                        player.botDifficulty.slice(1)
+                                      : "Bot"}
                                   </span>
                                 )}
                                 {player.id === playerId && (
@@ -1197,7 +1291,11 @@ export default function GameRoomPage() {
                                 )}
                               </p>
                               <p className="text-xs text-surface-400">
-                                {player.isReady ? "✓ Ready" : "Not ready"}
+                                {player.isBot
+                                  ? "🤖 AI Player"
+                                  : player.isReady
+                                    ? "✓ Ready"
+                                    : "Not ready"}
                               </p>
                             </div>
                           </div>
@@ -1228,37 +1326,80 @@ export default function GameRoomPage() {
                       ))}
                   </div>
 
-                  {/* Add Bot Button */}
-                  {isAmHost && players.filter((p) => !p.isSpectator).length < 4 && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.3 }}
-                      className="mt-4"
-                    >
-                      <Button
-                        onClick={() => room?.send("add_bot", {})}
-                        variant="secondary"
-                        size="sm"
-                        className="w-full"
+                  {/* Add Bot Button — only for games that support >2 players */}
+                  {isAmHost &&
+                    resolvedGameType &&
+                    [
+                      GameType.SEQUENCE,
+                      GameType.CATAN,
+                      GameType.SPLENDOR,
+                      GameType.MONOPOLY_DEAL,
+                    ].includes(resolvedGameType) &&
+                    players.filter((p) => !p.isSpectator).length <
+                      (resolvedGameType === GameType.MONOPOLY_DEAL ? 5 : 4) && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="mt-4"
                       >
-                        <svg
-                          className="w-4 h-4 mr-2"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M12 4v16m8-8H4"
-                          />
-                        </svg>
-                        Add Bot
-                      </Button>
-                    </motion.div>
-                  )}
+                        {showDifficultyPicker ? (
+                          <div className="bg-surface-700 rounded-xl p-3">
+                            <p className="text-xs text-surface-400 mb-2 text-center">
+                              Select bot difficulty
+                            </p>
+                            <div className="grid grid-cols-3 gap-2">
+                              {(["easy", "medium", "hard"] as const).map((diff) => (
+                                <button
+                                  key={diff}
+                                  onClick={() => {
+                                    room?.send("add_bot", { difficulty: diff });
+                                    setShowDifficultyPicker(false);
+                                  }}
+                                  className={`py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                                    diff === "easy"
+                                      ? "bg-green-500/20 text-green-300 hover:bg-green-500/30"
+                                      : diff === "medium"
+                                        ? "bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30"
+                                        : "bg-red-500/20 text-red-300 hover:bg-red-500/30"
+                                  }`}
+                                >
+                                  {diff.charAt(0).toUpperCase() + diff.slice(1)}
+                                </button>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => setShowDifficultyPicker(false)}
+                              className="mt-2 w-full text-xs text-surface-500 hover:text-surface-300 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <Button
+                            onClick={() => setShowDifficultyPicker(true)}
+                            variant="secondary"
+                            size="sm"
+                            className="w-full"
+                          >
+                            <svg
+                              className="w-4 h-4 mr-2"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M12 4v16m8-8H4"
+                              />
+                            </svg>
+                            Add Bot
+                          </Button>
+                        )}
+                      </motion.div>
+                    )}
                 </div>
               )}
 
@@ -1368,6 +1509,7 @@ export default function GameRoomPage() {
                   lastDiscardedCard={gameState.lastDiscardedCard}
                   isMyTurn={isMyTurn}
                   onPlayCard={handleSequenceMove}
+                  players={gameState.players}
                 />
               )}
 

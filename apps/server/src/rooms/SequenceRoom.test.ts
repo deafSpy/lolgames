@@ -6,8 +6,8 @@
 //   - Deals the correct hand size for 4 players (5 cards each)
 //   - checkStartGame blocks until all maxPlayers seats are filled
 
-import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
-import { SequenceChip } from "@multiplayer/shared";
+import { describe, it, expect, vi } from "vitest";
+import { SequenceCard, SequenceChip } from "@multiplayer/shared";
 
 vi.mock("../services/lobbyService.js", () => ({
   lobbyService: {
@@ -341,5 +341,281 @@ describe("SequenceRoom turn management (DEA-200)", () => {
     const spec = room.state.players.get("spec") as any;
     expect(spec.isSpectator).toBe(true);
     expect(spec.hand.length).toBe(0);
+  });
+});
+
+// ─── DEA-216: 1-eye and 2-eye Jack card actions ───────────────────────────────
+describe("SequenceRoom Jack card actions (DEA-216)", () => {
+  function make2PlayerRoom() {
+    const room = makeSequenceRoom(2);
+    stubClientsLength(room, 2);
+    room.onJoin({ sessionId: "p1" } as any, { playerName: "P1" });
+    room.onJoin({ sessionId: "p2" } as any, { playerName: "P2" });
+    vi.spyOn(room as any, "setMetadata").mockImplementation(() => {});
+    vi.spyOn(room as any, "broadcast").mockImplementation(() => {});
+    vi.spyOn(room as any, "clock", "get").mockReturnValue({
+      setTimeout: vi.fn(() => ({})),
+    });
+    (room as any).startGame();
+    return room;
+  }
+
+  function forceJackInHand(
+    room: ReturnType<typeof make2PlayerRoom>,
+    sessionId: string,
+    suit: "hearts" | "diamonds" | "clubs" | "spades"
+  ) {
+    const player = room.state.players.get(sessionId) as any;
+    const jack = new SequenceCard();
+    jack.rank = "J";
+    jack.suit = suit;
+    player.hand.splice(0, 1, jack); // Replace first card with the Jack
+  }
+
+  function placeChipAt(
+    room: ReturnType<typeof make2PlayerRoom>,
+    x: number,
+    y: number,
+    teamId: number,
+    inSequence = false
+  ) {
+    const chip = new SequenceChip();
+    chip.x = x;
+    chip.y = y;
+    chip.teamId = teamId;
+    chip.isPartOfSequence = inSequence;
+    room.state.chips.push(chip);
+  }
+
+  it("one-eyed Jack (hearts) removes an opponent chip", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    // Place an opponent chip (team 1) at a known position
+    placeChipAt(room, 3, 1, 1); // opponent of team-0 player
+
+    // Give the current player a one-eyed Jack (hearts → team 0)
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "hearts");
+
+    const initialChipCount = room.state.chips.length;
+
+    (room as any).handleMove({ sessionId: firstTurn, send: vi.fn() } as any, {
+      cardIndex: 0,
+      boardX: 3,
+      boardY: 1,
+    });
+
+    expect(room.state.chips.length).toBe(initialChipCount - 1);
+    expect(room.state.chips.find((c: SequenceChip) => c.x === 3 && c.y === 1)).toBeUndefined();
+  });
+
+  it("one-eyed Jack (spades) also removes an opponent chip", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    placeChipAt(room, 5, 2, 1);
+
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "spades");
+
+    (room as any).handleMove({ sessionId: firstTurn, send: vi.fn() } as any, {
+      cardIndex: 0,
+      boardX: 5,
+      boardY: 2,
+    });
+
+    expect(room.state.chips.find((c: SequenceChip) => c.x === 5 && c.y === 2)).toBeUndefined();
+  });
+
+  it("one-eyed Jack rejects targeting own chip", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    // Own chip at (3,1)
+    placeChipAt(room, 3, 1, 0);
+
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "hearts");
+
+    const errorSend = vi.fn();
+    (room as any).handleMove({ sessionId: firstTurn, send: errorSend } as any, {
+      cardIndex: 0,
+      boardX: 3,
+      boardY: 1,
+    });
+
+    expect(errorSend).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ message: "One-eyed jack must remove opponent's chip" })
+    );
+    expect(room.state.currentTurnId).toBe(firstTurn);
+  });
+
+  it("one-eyed Jack rejects targeting empty cell", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "hearts");
+
+    const errorSend = vi.fn();
+    (room as any).handleMove({ sessionId: firstTurn, send: errorSend } as any, {
+      cardIndex: 0,
+      boardX: 3,
+      boardY: 1, // empty
+    });
+
+    expect(errorSend).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ message: "One-eyed jack must remove opponent's chip" })
+    );
+  });
+
+  it("one-eyed Jack cannot remove a chip that is part of a sequence", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    // Opponent chip locked in a sequence
+    placeChipAt(room, 3, 1, 1, true);
+
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "hearts");
+
+    const errorSend = vi.fn();
+    (room as any).handleMove({ sessionId: firstTurn, send: errorSend } as any, {
+      cardIndex: 0,
+      boardX: 3,
+      boardY: 1,
+    });
+
+    expect(errorSend).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ message: "Cannot remove chip that is part of a sequence" })
+    );
+  });
+
+  it("two-eyed Jack (diamonds) places a chip on any empty cell", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "diamonds");
+
+    const initialChipCount = room.state.chips.length;
+
+    // (3,1) is empty — not a corner
+    (room as any).handleMove({ sessionId: firstTurn, send: vi.fn() } as any, {
+      cardIndex: 0,
+      boardX: 3,
+      boardY: 1,
+    });
+
+    expect(room.state.chips.length).toBe(initialChipCount + 1);
+    const placed = room.state.chips.find((c: SequenceChip) => c.x === 3 && c.y === 1);
+    expect(placed).toBeDefined();
+    expect(placed!.teamId).toBe(0);
+  });
+
+  it("two-eyed Jack (clubs) also places a chip", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "clubs");
+
+    (room as any).handleMove({ sessionId: firstTurn, send: vi.fn() } as any, {
+      cardIndex: 0,
+      boardX: 4,
+      boardY: 2,
+    });
+
+    expect(room.state.chips.find((c: SequenceChip) => c.x === 4 && c.y === 2)).toBeDefined();
+  });
+
+  it("two-eyed Jack rejects placement on an occupied cell", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    placeChipAt(room, 3, 1, 1); // already occupied
+
+    const player = room.state.players.get(firstTurn) as any;
+    player.teamId = 0;
+    forceJackInHand(room, firstTurn, "diamonds");
+
+    const errorSend = vi.fn();
+    (room as any).handleMove({ sessionId: firstTurn, send: errorSend } as any, {
+      cardIndex: 0,
+      boardX: 3,
+      boardY: 1,
+    });
+
+    expect(errorSend).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ message: "Position already occupied" })
+    );
+  });
+
+  it("both Jack types reject FREE corner squares", () => {
+    const room = make2PlayerRoom();
+    const firstTurn = room.state.currentTurnId;
+
+    for (const suit of ["hearts", "diamonds"] as const) {
+      forceJackInHand(room, firstTurn, suit);
+      const errorSend = vi.fn();
+      (room as any).handleMove({ sessionId: firstTurn, send: errorSend } as any, {
+        cardIndex: 0,
+        boardX: 0,
+        boardY: 0, // FREE corner
+      });
+      expect(errorSend).toHaveBeenCalledWith(
+        "error",
+        expect.objectContaining({ message: "Cannot play on free corners" })
+      );
+    }
+  });
+
+  it("both Jack actions advance the turn to the other player", () => {
+    const room = make2PlayerRoom();
+
+    // 1-eye Jack turn advance
+    {
+      const firstTurn = room.state.currentTurnId;
+      const player = room.state.players.get(firstTurn) as any;
+      player.teamId = 0;
+      placeChipAt(room, 3, 1, 1);
+      forceJackInHand(room, firstTurn, "hearts");
+
+      (room as any).handleMove({ sessionId: firstTurn, send: vi.fn() } as any, {
+        cardIndex: 0,
+        boardX: 3,
+        boardY: 1,
+      });
+
+      expect(room.state.currentTurnId).not.toBe(firstTurn);
+    }
+
+    // 2-eye Jack turn advance
+    {
+      const secondTurn = room.state.currentTurnId;
+      const player2 = room.state.players.get(secondTurn) as any;
+      player2.teamId = 1;
+      forceJackInHand(room, secondTurn, "diamonds");
+
+      (room as any).handleMove({ sessionId: secondTurn, send: vi.fn() } as any, {
+        cardIndex: 0,
+        boardX: 5,
+        boardY: 2,
+      });
+
+      expect(room.state.currentTurnId).not.toBe(secondTurn);
+    }
   });
 });

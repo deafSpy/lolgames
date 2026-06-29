@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface SequenceCard {
@@ -13,6 +13,12 @@ interface SequenceChip {
   y: number;
   teamId: number;
   isPartOfSequence: boolean;
+}
+
+interface SequencePlayerEntry {
+  id: string;
+  displayName: string;
+  teamId?: number;
 }
 
 interface SequenceBoardProps {
@@ -30,6 +36,7 @@ interface SequenceBoardProps {
   isMyTurn: boolean;
   onPlayCard: (cardIndex: number, boardX: number, boardY: number) => void;
   disabled?: boolean;
+  players?: Map<string, SequencePlayerEntry>;
 }
 
 // Simplified board layout display with suit colors
@@ -107,13 +114,36 @@ export function SequenceBoard({
   isMyTurn,
   onPlayCard,
   disabled = false,
+  players,
 }: SequenceBoardProps) {
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
   const [flyingCards, setFlyingCards] = useState<FlyingCard[]>([]);
+  const [playerDiscards, setPlayerDiscards] = useState<Map<string, string[]>>(new Map());
 
   const discardRef = useRef<HTMLDivElement>(null);
   const deckRef = useRef<HTMLDivElement>(null);
   const handCardRefs = useRef<Map<number, HTMLButtonElement | null>>(new Map());
+  const prevTurnIdRef = useRef<string>(currentTurnId);
+  const prevLastDiscardedRef = useRef<string | undefined>(lastDiscardedCard);
+
+  // Track which player played each card by watching turn changes alongside lastDiscardedCard
+  useEffect(() => {
+    if (
+      lastDiscardedCard &&
+      lastDiscardedCard !== prevLastDiscardedRef.current &&
+      prevTurnIdRef.current
+    ) {
+      const playedBy = prevTurnIdRef.current;
+      setPlayerDiscards((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(playedBy) || [];
+        next.set(playedBy, [...existing, lastDiscardedCard]);
+        return next;
+      });
+    }
+    prevLastDiscardedRef.current = lastDiscardedCard;
+    prevTurnIdRef.current = currentTurnId;
+  }, [currentTurnId, lastDiscardedCard]);
 
   const getChipAt = (x: number, y: number) => {
     return chips.find((c) => c.x === x && c.y === y);
@@ -128,7 +158,20 @@ export function SequenceBoard({
     const selectedCardData = hand[selectedCard];
     if (!selectedCardData) return false;
 
-    const cardRank = selectedCardData.rank;
+    const jackType = getJackType(selectedCardData);
+
+    if (jackType === "one-eyed") {
+      // Must target an opponent's chip that is not part of a completed sequence
+      const chip = getChipAt(x, y);
+      return !!chip && chip.teamId !== teamId && !chip.isPartOfSequence;
+    }
+
+    if (jackType === "two-eyed") {
+      // Can place on any empty cell
+      return !getChipAt(x, y);
+    }
+
+    // Regular card: must match board notation and cell must be empty
     const cardSuit =
       selectedCardData.suit === "hearts"
         ? "♥"
@@ -137,9 +180,7 @@ export function SequenceBoard({
           : selectedCardData.suit === "clubs"
             ? "♣"
             : "♠";
-
-    const cardNotation = cardRank + cardSuit;
-    return boardCell === cardNotation;
+    return boardCell === selectedCardData.rank + cardSuit && !getChipAt(x, y);
   };
 
   const launchCardToDiscard = useCallback((cardIndex: number, playedCard: SequenceCard) => {
@@ -193,6 +234,14 @@ export function SequenceBoard({
           selectedCard === null ? (
             <span className="text-success font-medium">
               Your turn! Select a card from your hand.
+            </span>
+          ) : getJackType(hand[selectedCard]) === "one-eyed" ? (
+            <span className="text-warning font-medium">
+              1-eye Jack: click an opponent&apos;s chip to remove it.
+            </span>
+          ) : getJackType(hand[selectedCard]) === "two-eyed" ? (
+            <span className="text-success font-medium">
+              2-eye Jack: click any empty space to place your chip.
             </span>
           ) : (
             <span className="text-success font-medium">
@@ -265,6 +314,8 @@ export function SequenceBoard({
               const chip = getChipAt(x, y);
               const isFreeSpace = cell === "⭐";
               const isValidMove = isValidForSelectedCard(x, y);
+              const selectedJackType =
+                selectedCard !== null ? getJackType(hand[selectedCard]) : null;
               const suit = getSuitFromCard(cell);
               const suitTextColor = SUIT_TEXT_COLORS[suit as keyof typeof SUIT_TEXT_COLORS];
               const jackType = getJackType(cell);
@@ -318,12 +369,23 @@ export function SequenceBoard({
                   {isFreeSpace && (
                     <div className="absolute inset-1 rounded-full bg-accent-500/50 border border-accent-400" />
                   )}
+                  {/* Ghost chip for 2-eye Jack / regular card placements */}
                   {selectedCard !== null && isValidMove && !chip && (
                     <motion.div
                       initial={{ scale: 0, opacity: 0 }}
                       animate={{ scale: 0.6, opacity: 0.8 }}
                       className="absolute inset-1 rounded-full bg-white/60 border-2 border-success"
                     />
+                  )}
+                  {/* Removal indicator for 1-eye Jack targets */}
+                  {selectedJackType === "one-eyed" && isValidMove && chip && (
+                    <motion.div
+                      initial={{ scale: 0, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none"
+                    >
+                      <span className="text-red-400 font-black text-base leading-none">✕</span>
+                    </motion.div>
                   )}
                 </button>
               );
@@ -398,6 +460,94 @@ export function SequenceBoard({
           })}
         </div>
       </div>
+
+      {/* Per-player discard piles */}
+      {players && players.size > 0 && (
+        <div className="mt-6 w-full max-w-xl">
+          <div className="text-xs text-surface-400 mb-2 text-center uppercase tracking-wider">
+            Played Cards
+          </div>
+          <div className="flex flex-wrap justify-center gap-4">
+            {Array.from(players.values()).map((player) => {
+              const pile = playerDiscards.get(player.id) || [];
+              const visibleCards = pile.slice(-5);
+              const isCurrentTurn = player.id === currentTurnId;
+              const playerTeamId = player.teamId ?? 0;
+              return (
+                <div key={player.id} className="flex flex-col items-center gap-1">
+                  <div
+                    className={`text-xs font-medium truncate max-w-[80px] ${
+                      isCurrentTurn
+                        ? playerTeamId === 0
+                          ? "text-primary-300"
+                          : "text-accent-300"
+                        : "text-surface-400"
+                    }`}
+                  >
+                    {player.id === playerId ? "You" : player.displayName}
+                    {isCurrentTurn && <span className="ml-1 text-success text-[10px]">▶</span>}
+                  </div>
+
+                  {/* Staggered card stack */}
+                  <div
+                    className="relative"
+                    style={{
+                      width: 48 + visibleCards.length * 4,
+                      height: 64 + visibleCards.length * 2,
+                    }}
+                  >
+                    {visibleCards.length === 0 ? (
+                      <div className="w-10 h-14 rounded-lg border-2 border-dashed border-surface-600 opacity-40" />
+                    ) : (
+                      visibleCards.map((rawCard, i) => {
+                        const parsed = parseRawCard(rawCard);
+                        const isTopCard = i === visibleCards.length - 1;
+                        return (
+                          <motion.div
+                            key={`${player.id}-${pile.length - visibleCards.length + i}`}
+                            initial={isTopCard ? { scale: 0.6, opacity: 0 } : false}
+                            animate={{ scale: 1, opacity: 1 }}
+                            transition={{ duration: 0.25, ease: "easeOut" }}
+                            className="absolute w-10 h-14 rounded-lg bg-white border border-surface-300 flex flex-col items-center justify-center shadow-sm"
+                            style={{
+                              left: i * 4,
+                              top: i * 2,
+                              zIndex: i,
+                            }}
+                          >
+                            {parsed ? (
+                              <>
+                                <span className="text-black text-[10px] font-bold leading-none">
+                                  {parsed.rank}
+                                </span>
+                                <span
+                                  className="text-sm font-bold leading-none"
+                                  style={{
+                                    color:
+                                      SUIT_TEXT_COLORS[
+                                        parsed.suitSymbol as keyof typeof SUIT_TEXT_COLORS
+                                      ],
+                                  }}
+                                >
+                                  {parsed.suitSymbol}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-surface-500 text-xs">?</span>
+                            )}
+                          </motion.div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div className="text-[10px] text-surface-500">{pile.length} played</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Team info */}
       <div className="mt-4 text-center text-surface-500 text-sm">

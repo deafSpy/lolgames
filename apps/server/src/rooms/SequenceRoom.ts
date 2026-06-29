@@ -2,6 +2,8 @@ import { Client } from "@colyseus/core";
 import { SequenceState, SequencePlayer, SequenceCard, SequenceChip } from "@multiplayer/shared";
 import { BaseRoom, type JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
+import { SequenceBot } from "../bots/SequenceBot.js";
+import type { BotAgent } from "../bots/BotAgent.js";
 
 interface MoveData {
   cardIndex: number;
@@ -422,6 +424,125 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       const x = startX + i * dx;
       const y = startY + i * dy;
       usedInSequence.add(`${x},${y}`);
+    }
+  }
+
+  protected createLobbyBotPlayerSchema(
+    _botId: string,
+    _botName: string,
+    _difficulty: string
+  ): import("@multiplayer/shared").GamePlayerSchema {
+    const bot = new SequencePlayer();
+    // Alternate teams in insertion order so the bot joins the smaller team
+    bot.teamId = this.initialPlayers.size % 2;
+    return bot;
+  }
+
+  protected createLobbyBotAgent(botId: string, difficulty: string): BotAgent {
+    return new SequenceBot(botId, {
+      difficulty: difficulty as "easy" | "medium" | "hard",
+    });
+  }
+
+  protected scheduleLobbyBotMoveIfNeeded(): void {
+    if (this.state.status !== "in_progress") return;
+
+    const currentId = this.state.currentTurnId;
+    const agent = this.lobbyBotAgents.get(currentId) as SequenceBot | undefined;
+    if (!agent) return;
+
+    const delay = 700 + Math.random() * 500;
+
+    this.clock.setTimeout(async () => {
+      if (this.state.status !== "in_progress") return;
+      if (this.state.currentTurnId !== currentId) return;
+
+      try {
+        const gameState = this.buildBotGameState();
+        const move = (await agent.getMove(gameState)) as {
+          cardIndex: number;
+          boardX: number;
+          boardY: number;
+        };
+
+        if (this.state.status !== "in_progress" || this.state.currentTurnId !== currentId) return;
+
+        const fakeClient = { sessionId: currentId, send: () => {} } as unknown as Client;
+        this.handleMoveMessage(fakeClient, move);
+      } catch (error) {
+        logger.error({ error, botId: currentId }, "Lobby bot move failed, making random move");
+        this.makeLobbyBotRandomMove(currentId);
+      }
+    }, delay);
+  }
+
+  private buildBotGameState(): unknown {
+    const players = new Map<string, unknown>();
+
+    for (const [id, player] of this.state.players) {
+      const p = player as SequencePlayer;
+      players.set(id, {
+        id: p.id,
+        teamId: p.teamId,
+        hand: Array.from(p.hand).map((c) => ({ rank: c.rank, suit: c.suit })),
+      });
+    }
+
+    return {
+      currentTurnId: this.state.currentTurnId,
+      players,
+      chips: Array.from(this.state.chips).map((c) => ({
+        x: c.x,
+        y: c.y,
+        teamId: c.teamId,
+        isPartOfSequence: c.isPartOfSequence,
+      })),
+      team1Sequences: this.state.team1Sequences,
+      team2Sequences: this.state.team2Sequences,
+    };
+  }
+
+  private makeLobbyBotRandomMove(botId: string): void {
+    const LAYOUT: string[][] = [
+      ["FREE", "2S", "3S", "4S", "5S", "6S", "7S", "8S", "9S", "FREE"],
+      ["6C", "5C", "4C", "3C", "2C", "AH", "KH", "QH", "10H", "10S"],
+      ["7C", "AS", "2D", "3D", "4D", "5D", "6D", "7D", "9H", "QS"],
+      ["8C", "KS", "6C", "5C", "4C", "3C", "2C", "8D", "8H", "KS"],
+      ["9C", "QS", "7C", "6H", "5H", "4H", "AH", "9D", "7H", "AS"],
+      ["10C", "10S", "8C", "7H", "2H", "3H", "KH", "10D", "6H", "2D"],
+      ["QC", "9S", "9C", "8H", "9H", "10H", "QH", "QD", "5H", "3D"],
+      ["KC", "8S", "10C", "QC", "KC", "AC", "AD", "KD", "4H", "4D"],
+      ["AC", "7S", "6S", "5S", "4S", "3S", "2S", "2H", "3H", "5D"],
+      ["FREE", "AD", "KD", "QD", "10D", "9D", "8D", "7D", "6D", "FREE"],
+    ];
+
+    const player = this.state.players.get(botId) as SequencePlayer;
+    if (!player || player.hand.length === 0) return;
+
+    for (let cardIndex = 0; cardIndex < player.hand.length; cardIndex++) {
+      const card = player.hand[cardIndex] as SequenceCard;
+      const suitChar =
+        card.suit === "hearts"
+          ? "H"
+          : card.suit === "diamonds"
+            ? "D"
+            : card.suit === "clubs"
+              ? "C"
+              : "S";
+      const cardStr = `${card.rank}${suitChar}`;
+
+      for (let y = 0; y < 10; y++) {
+        for (let x = 0; x < 10; x++) {
+          if (LAYOUT[y][x] === cardStr) {
+            const occupied = this.state.chips.some((c) => c.x === x && c.y === y);
+            if (!occupied) {
+              const fakeClient = { sessionId: botId, send: () => {} } as unknown as Client;
+              this.handleMoveMessage(fakeClient, { cardIndex, boardX: x, boardY: y });
+              return;
+            }
+          }
+        }
+      }
     }
   }
 

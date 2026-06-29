@@ -9,6 +9,8 @@ import {
 } from "@multiplayer/shared";
 import { BaseRoom, type JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
+import { MonopolyDealBot } from "../bots/MonopolyDealBot.js";
+import type { BotAgent } from "../bots/BotAgent.js";
 
 // Property set requirements (how many cards complete a set)
 const SET_REQUIREMENTS: Record<string, number> = {
@@ -1390,5 +1392,136 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
       }
     }
     return null;
+  }
+
+  protected createLobbyBotPlayerSchema(
+    _botId: string,
+    _botName: string,
+    _difficulty: string
+  ): import("@multiplayer/shared").GamePlayerSchema {
+    const bot = new MonopolyDealPlayerSchema();
+    bot.actionsRemaining = 0;
+    return bot;
+  }
+
+  protected createLobbyBotAgent(botId: string, difficulty: string): BotAgent {
+    return new MonopolyDealBot(botId, {
+      difficulty: difficulty as "easy" | "medium" | "hard",
+    });
+  }
+
+  private isLobbyBotScheduled = false;
+
+  protected scheduleLobbyBotMoveIfNeeded(): void {
+    if (this.state.status !== "in_progress") return;
+
+    // Check if there's a pending respond action for a lobby bot
+    const respondPhase = this.state as unknown as { phase?: string; activeResponderId?: string };
+    if (respondPhase.phase === "respond" && respondPhase.activeResponderId) {
+      const respondAgent = this.lobbyBotAgents.get(respondPhase.activeResponderId);
+      if (respondAgent && !this.isLobbyBotScheduled) {
+        this.scheduleLobbyBotResponse(
+          respondPhase.activeResponderId,
+          respondAgent as MonopolyDealBot
+        );
+        return;
+      }
+    }
+
+    const currentId = this.state.currentTurnId;
+    const agent = this.lobbyBotAgents.get(currentId) as MonopolyDealBot | undefined;
+    if (!agent) return;
+
+    if (this.isLobbyBotScheduled) return;
+    this.isLobbyBotScheduled = true;
+
+    const delay = 600 + Math.random() * 400;
+
+    this.clock.setTimeout(async () => {
+      if (this.state.status !== "in_progress" || this.state.currentTurnId !== currentId) {
+        this.isLobbyBotScheduled = false;
+        return;
+      }
+
+      try {
+        const gameState = this.buildMonopolyBotState();
+        const move = await agent.getMove(gameState);
+        const fakeClient = { sessionId: currentId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, move as unknown);
+
+        this.isLobbyBotScheduled = false;
+        // Re-schedule if still this bot's turn (chained actions within a turn)
+        if (this.state.status === "in_progress" && this.state.currentTurnId === currentId) {
+          this.scheduleLobbyBotMoveIfNeeded();
+        }
+      } catch (error) {
+        logger.error({ error, botId: currentId }, "MonopolyDeal lobby bot move failed");
+        this.isLobbyBotScheduled = false;
+        this.nextTurn();
+      }
+    }, delay);
+  }
+
+  private scheduleLobbyBotResponse(responderId: string, agent: MonopolyDealBot): void {
+    this.isLobbyBotScheduled = true;
+    const delay = 400 + Math.random() * 300;
+
+    this.clock.setTimeout(async () => {
+      const respondPhase = this.state as unknown as { phase?: string; activeResponderId?: string };
+      if (respondPhase.phase !== "respond" || respondPhase.activeResponderId !== responderId) {
+        this.isLobbyBotScheduled = false;
+        return;
+      }
+
+      try {
+        const gameState = this.buildMonopolyBotState();
+        const move = await agent.getMove(gameState);
+        const fakeClient = { sessionId: responderId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, move as unknown);
+      } catch {
+        // Default: accept the action
+        const fakeClient = { sessionId: responderId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, { action: "respond", response: "accept" });
+      } finally {
+        this.isLobbyBotScheduled = false;
+        this.scheduleLobbyBotMoveIfNeeded();
+      }
+    }, delay);
+  }
+
+  private buildMonopolyBotState(): unknown {
+    const players = new Map<string, unknown>();
+    for (const [id, player] of this.state.players) {
+      const p = player as MonopolyDealPlayerSchema;
+      players.set(id, {
+        id: p.id,
+        hand: Array.from(p.hand).map((c) => ({
+          id: c.id,
+          cardType: c.cardType,
+          value: c.value,
+          color: c.color,
+        })),
+        bank: Array.from(p.bank).map((c) => ({ id: c.id, cardType: c.cardType, value: c.value })),
+        propertySets: Array.from(p.propertySets).map((s) => ({
+          color: s.color,
+          cards: Array.from(s.cards).map((c) => ({
+            id: c.id,
+            cardType: c.cardType,
+            color: c.color,
+          })),
+          isComplete: s.isComplete,
+        })),
+        completeSets: p.completeSets,
+        actionsRemaining: p.actionsRemaining,
+        amountOwed: p.amountOwed,
+        owedToPlayerId: p.owedToPlayerId,
+      });
+    }
+
+    return {
+      currentTurnId: this.state.currentTurnId,
+      phase: (this.state as unknown as { phase?: string }).phase,
+      players,
+    };
   }
 }
