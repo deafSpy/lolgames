@@ -241,6 +241,22 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     return "";
   }
 
+  protected async handleMoveMessage(client: Client, data: unknown): Promise<void> {
+    const moveData = data as { action?: string };
+
+    // "continue" is a client acknowledgment during payout/elimination. The game
+    // auto-advances via clock.setTimeout so no server action is needed; just
+    // silently accept it so the client doesn't receive a "Not your turn" error.
+    if (
+      moveData?.action === "continue" &&
+      (this.state.phase === "payout" || this.state.phase === "elimination")
+    ) {
+      return;
+    }
+
+    await super.handleMoveMessage(client, data);
+  }
+
   handleMove(client: Client, data: unknown): void {
     const moveData = data as ActionData;
     const player = this.state.players.get(client.sessionId) as BlackjackPlayerSchema;
@@ -863,7 +879,7 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     }
   }
 
-  private startNextHand(): void {
+  protected startNextHand(): void {
     // Rotate button
     const buttonIndex = this.playerOrder.indexOf(this.state.buttonPlayerId);
     let nextButtonIndex = (buttonIndex + 1) % this.playerOrder.length;

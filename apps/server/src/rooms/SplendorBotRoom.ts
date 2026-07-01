@@ -88,8 +88,12 @@ export class SplendorBotRoom extends SplendorRoom {
   handleMove(client: Client, data: unknown): void {
     super.handleMove(client, data);
 
-    // After human move, check if next player is a bot
-    this.scheduleBotMove();
+    // Only kick off the bot if it now has the turn and no timer chain is already running.
+    // Unconditional scheduling races with the recursive scheduleBotMove() inside the
+    // timer chain when the bot has multi-step actions (discard_gems, select_noble).
+    if (!this.isBotScheduled && this.state.currentTurnId.startsWith("splendor_bot_")) {
+      this.scheduleBotMove();
+    }
   }
 
   private scheduleBotMove(): void {
@@ -136,11 +140,10 @@ export class SplendorBotRoom extends SplendorRoom {
           return;
         }
 
-        // Clear the flag before executing the move so the recursive scheduleBotMove()
-        // at the end can re-acquire it if the bot still has the turn.
-        this.isBotScheduled = false;
-
-        // Execute bot move (internally calls nextTurn() when the turn is complete)
+        // Execute bot move (internally calls nextTurn() when the turn is complete).
+        // Keep isBotScheduled = true here so any re-entrant scheduleBotMove() calls
+        // (e.g. from Colyseus broadcast or nextTurn callbacks) cannot start a second
+        // concurrent timer chain during execution.
         this.executeBotMove(currentId, move as Record<string, unknown>);
 
         // Bug 4 fix: after executeBotMove, nextTurn() has already run inside the
@@ -148,12 +151,16 @@ export class SplendorBotRoom extends SplendorRoom {
         // checkWinCondition fires correctly at that point.
         const winResult = this.checkWinCondition();
         if (winResult) {
+          this.isBotScheduled = false;
           await this.endGame(winResult.winner, winResult.isDraw);
           return;
         }
 
-        // Continue scheduling if next player is a bot or bot has a multi-step turn
-        // (discard/noble phases keep currentTurnId on the bot until resolved)
+        // Clear the flag immediately before the recursive call so scheduleBotMove()
+        // can re-acquire it if the bot still has the turn (multi-step actions such
+        // as discard_gems or select_noble). If it is now the human's turn,
+        // scheduleBotMove() returns early and isBotScheduled stays false.
+        this.isBotScheduled = false;
         this.scheduleBotMove();
       } catch (error) {
         logger.error(

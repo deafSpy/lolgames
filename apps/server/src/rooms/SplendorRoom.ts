@@ -8,6 +8,10 @@ import {
 } from "@multiplayer/shared";
 import { BaseRoom, type JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
+import { lobbyService } from "../services/lobbyService.js";
+import type { ParticipantIdentity } from "../services/historyService.js";
+import { SplendorBot } from "../bots/SplendorBot.js";
+import type { BotAgent } from "../bots/BotAgent.js";
 
 type GemType = "white" | "blue" | "green" | "red" | "black";
 type GemOrGold = GemType | "gold";
@@ -63,7 +67,7 @@ const TIER1_CARDS: Array<{
   { gemType: "black", points: 1, cost: { red: 3 } },
   { gemType: "black", points: 1, cost: { green: 2, red: 1 } },
   { gemType: "black", points: 1, cost: { green: 2, red: 2 } },
-  { gemType: "black", points: 1, cost: { white: 1 } },
+  { gemType: "black", points: 0, cost: { white: 1 } },
   // Blue cards
   { gemType: "blue", points: 0, cost: { black: 1 } },
   { gemType: "blue", points: 0, cost: { red: 1, black: 1 } },
@@ -258,12 +262,27 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
   }
 
   onJoin(client: Client, options: JoinOptions): void {
+    const existingPlayer = this.state.players.get(client.sessionId) as
+      | SplendorPlayerSchema
+      | undefined;
+
+    if (existingPlayer) {
+      // Reconnect — restore connection state without resetting isReady
+      existingPlayer.isConnected = true;
+      logger.info(
+        { roomId: this.roomId, playerId: client.sessionId },
+        "Player reconnected to Splendor"
+      );
+      return;
+    }
+
     const player = new SplendorPlayerSchema();
     player.id = client.sessionId;
     player.displayName = options.playerName || `Guest_${client.sessionId.slice(0, 4)}`;
     player.isReady = false;
     player.isConnected = true;
     player.joinedAt = Date.now();
+    player.isBot = false;
 
     player.gemWhite = 0;
     player.gemBlue = 0;
@@ -273,15 +292,110 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     player.gemGold = 0;
     player.points = 0;
 
+    // React StrictMode double-mount dedup: evict stale ghost slot for same browser session
+    if (options.browserSessionId) {
+      const priorSessionId = this.browserSessionToInitialPlayer.get(options.browserSessionId);
+      if (priorSessionId) {
+        const priorPlayer = this.state.players.get(priorSessionId);
+        if (!priorPlayer || !priorPlayer.isConnected) {
+          this.initialPlayers.delete(priorSessionId);
+          this.playerIdentities.delete(priorSessionId);
+          this.browserSessionToInitialPlayer.delete(options.browserSessionId);
+          if (priorPlayer && !priorPlayer.isConnected) {
+            this.state.players.delete(priorSessionId);
+          }
+        }
+      }
+    }
+
+    // Spectator if game already started or all non-spectator seats are taken
+    const seatsAreFull = this.initialPlayers.size >= this.maxPlayers;
+    player.isSpectator =
+      this.state.status === "in_progress" || (this.state.status === "waiting" && seatsAreFull);
+    player.wasInitialPlayer = !player.isSpectator;
+    player.isHost = false;
+
+    if (!player.isSpectator && this.state.status === "waiting") {
+      if (this.initialPlayers.size === 0) {
+        this.hostSessionId = client.sessionId;
+        player.isHost = true;
+      }
+      this.initialPlayers.add(client.sessionId);
+      if (options.browserSessionId) {
+        this.browserSessionToInitialPlayer.set(options.browserSessionId, client.sessionId);
+      }
+
+      const identity: ParticipantIdentity = {
+        identity: options.userId
+          ? `user:${options.userId}`
+          : options.browserSessionId
+            ? `guest:${options.browserSessionId}`
+            : `guest:${client.sessionId}`,
+        displayName: player.displayName,
+        userId: options.userId,
+        browserSessionId: options.browserSessionId,
+        isBot: false,
+      };
+      this.playerIdentities.set(client.sessionId, identity);
+
+      lobbyService.playerJoined(this.roomId).catch((err) => {
+        logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
+      });
+    }
+
     this.state.players.set(client.sessionId, player);
 
     logger.info(
-      { roomId: this.roomId, playerId: client.sessionId, playerName: player.displayName },
+      {
+        roomId: this.roomId,
+        playerId: client.sessionId,
+        playerName: player.displayName,
+        isSpectator: player.isSpectator,
+        initialPlayersCount: this.initialPlayers.size,
+      },
       "Player joined Splendor"
     );
 
+    // Delayed room_info so the message arrives after the JOIN_ROOM acknowledgment
+    if (this.roomSlug) {
+      const slug = this.roomSlug;
+      this.clock.setTimeout(() => {
+        try {
+          client.send("room_info", { roomSlug: slug });
+        } catch {
+          // Client disconnected during handshake window — no-op
+        }
+      }, 250);
+    }
+
     if (this.clients.length >= this.maxPlayers) {
       this.lock();
+    }
+  }
+
+  protected checkStartGame(): void {
+    if (this.state.status !== "waiting") return;
+
+    // Splendor supports 2-4 players; start when ≥2 non-spectator players are all ready.
+    // BaseRoom.checkStartGame() requires seatedPlayers.length >= maxPlayers (4 for this
+    // room type), which blocks 2-player games. Override to use the actual minimum (2).
+    const seatedPlayers = Array.from(this.state.players.values()).filter((p) => !p.isSpectator);
+    if (seatedPlayers.length < 2) return;
+
+    const allReady = seatedPlayers.every((p) => p.isReady);
+
+    logger.info(
+      {
+        roomId: this.roomId,
+        seatedCount: seatedPlayers.length,
+        allReady,
+        initialPlayers: Array.from(this.initialPlayers),
+      },
+      "Checking if Splendor game should start"
+    );
+
+    if (allReady) {
+      this.startGame();
     }
   }
 
@@ -332,6 +446,10 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
     this.state.phase = "take_gems";
 
     const playerIds = Array.from(this.state.players.keys());
+    // Sync initialPlayers so BaseRoom.nextTurn() can rotate correctly.
+    // SplendorRoom.onJoin() bypasses BaseRoom.onJoin(), so initialPlayers is
+    // empty unless we populate it here (same pattern as CatanRoom).
+    this.initialPlayers = new Set(playerIds);
     this.state.currentTurnId = playerIds[0];
     this.state.turnStartedAt = Date.now();
 
@@ -884,6 +1002,150 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
       counts[card.gemType as GemType] = (counts[card.gemType as GemType] || 0) + 1;
     }
     return counts;
+  }
+
+  protected createLobbyBotPlayerSchema(
+    _botId: string,
+    _botName: string,
+    _difficulty: string
+  ): import("@multiplayer/shared").GamePlayerSchema {
+    const bot = new SplendorPlayerSchema();
+    bot.gemWhite = 0;
+    bot.gemBlue = 0;
+    bot.gemGreen = 0;
+    bot.gemRed = 0;
+    bot.gemBlack = 0;
+    bot.gemGold = 0;
+    bot.points = 0;
+    return bot;
+  }
+
+  protected createLobbyBotAgent(botId: string, difficulty: string): BotAgent {
+    return new SplendorBot(botId, {
+      difficulty: difficulty as "easy" | "medium" | "hard",
+    });
+  }
+
+  private isLobbyBotScheduled = false;
+
+  protected scheduleLobbyBotMoveIfNeeded(): void {
+    if (this.state.status !== "in_progress") return;
+
+    const currentId = this.state.currentTurnId;
+    const agent = this.lobbyBotAgents.get(currentId) as SplendorBot | undefined;
+    if (!agent) return;
+
+    if (this.isLobbyBotScheduled) return;
+    this.isLobbyBotScheduled = true;
+
+    const delay = 800 + Math.random() * 500;
+
+    this.clock.setTimeout(async () => {
+      if (this.state.status !== "in_progress" || this.state.currentTurnId !== currentId) {
+        this.isLobbyBotScheduled = false;
+        return;
+      }
+
+      try {
+        const gameState = this.buildSplendorBotState();
+        const move = await agent.getMove(gameState);
+
+        if (!move || typeof move !== "object") {
+          this.isLobbyBotScheduled = false;
+          this.nextTurn();
+          return;
+        }
+
+        const fakeClient = { sessionId: currentId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, move as unknown);
+
+        this.isLobbyBotScheduled = false;
+        // Re-schedule if still this bot's turn (multi-step action like discard_gems)
+        if (this.state.status === "in_progress" && this.state.currentTurnId === currentId) {
+          this.scheduleLobbyBotMoveIfNeeded();
+        }
+      } catch (error) {
+        logger.error({ error, botId: currentId }, "Splendor lobby bot move failed");
+        this.isLobbyBotScheduled = false;
+        this.nextTurn();
+      }
+    }, delay);
+  }
+
+  private buildSplendorBotState(): unknown {
+    const players = new Map<string, unknown>();
+    for (const [id, player] of this.state.players) {
+      const p = player as SplendorPlayerSchema;
+      players.set(id, {
+        id: p.id,
+        gemWhite: p.gemWhite,
+        gemBlue: p.gemBlue,
+        gemGreen: p.gemGreen,
+        gemRed: p.gemRed,
+        gemBlack: p.gemBlack,
+        gemGold: p.gemGold,
+        points: p.points,
+        cards: Array.from(p.cards).map((c) => ({
+          id: c.id,
+          tier: c.tier,
+          gemType: c.gemType,
+          points: c.points,
+          costWhite: c.costWhite,
+          costBlue: c.costBlue,
+          costGreen: c.costGreen,
+          costRed: c.costRed,
+          costBlack: c.costBlack,
+        })),
+        reservedCards: Array.from(p.reserved).map((c) => ({
+          id: c.id,
+          tier: c.tier,
+          gemType: c.gemType,
+          points: c.points,
+          costWhite: c.costWhite,
+          costBlue: c.costBlue,
+          costGreen: c.costGreen,
+          costRed: c.costRed,
+          costBlack: c.costBlack,
+        })),
+      });
+    }
+
+    const cardMap = (arr: ArraySchema<SplendorCardSchema>) =>
+      Array.from(arr).map((c) => ({
+        id: c.id,
+        tier: c.tier,
+        gemType: c.gemType,
+        points: c.points,
+        costWhite: c.costWhite,
+        costBlue: c.costBlue,
+        costGreen: c.costGreen,
+        costRed: c.costRed,
+        costBlack: c.costBlack,
+      }));
+
+    return {
+      bankWhite: this.state.bankWhite,
+      bankBlue: this.state.bankBlue,
+      bankGreen: this.state.bankGreen,
+      bankRed: this.state.bankRed,
+      bankBlack: this.state.bankBlack,
+      bankGold: this.state.bankGold,
+      tier1Cards: cardMap(this.state.tier1Cards),
+      tier2Cards: cardMap(this.state.tier2Cards),
+      tier3Cards: cardMap(this.state.tier3Cards),
+      nobles: Array.from(this.state.nobles).map((n) => ({
+        id: n.id,
+        points: n.points,
+        reqWhite: n.reqWhite,
+        reqBlue: n.reqBlue,
+        reqGreen: n.reqGreen,
+        reqRed: n.reqRed,
+        reqBlack: n.reqBlack,
+      })),
+      players,
+      currentTurnId: this.state.currentTurnId,
+      phase: this.state.phase,
+    };
   }
 
   checkWinCondition(): { winner: string | null; isDraw: boolean } | null {

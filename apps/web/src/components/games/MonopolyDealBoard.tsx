@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface MonopolyDealCard {
@@ -118,18 +118,42 @@ export function MonopolyDealBoard({
   const [paymentCards, setPaymentCards] = useState<string[]>([]);
   const [discardCards, setDiscardCards] = useState<string[]>([]);
 
-  const myPlayer = useMemo(() => 
-    Array.from(players.values()).find(p => p.id === playerId),
+  // Animation tracking
+  const prevHandIdsRef = useRef<Set<string>>(new Set());
+  const [newCardIds, setNewCardIds] = useState<Set<string>>(new Set());
+  const newCardOrderRef = useRef<string[]>([]);
+  const [animatingPayCards, setAnimatingPayCards] = useState<MonopolyDealCard[]>([]);
+
+  const myPlayer = useMemo(
+    () => Array.from(players.values()).find((p) => p.id === playerId),
     [players, playerId]
   );
-  
-  const opponents = useMemo(() => 
-    Array.from(players.values()).filter(p => p.id !== playerId),
+
+  const opponents = useMemo(
+    () => Array.from(players.values()).filter((p) => p.id !== playerId),
     [players, playerId]
   );
 
   const currentAction = actionStack.length > 0 ? actionStack[actionStack.length - 1] : null;
   const mustRespond = activeResponderId === playerId;
+
+  // Detect cards newly added to hand (from draw) and animate them from deck
+  useEffect(() => {
+    if (!myPlayer) return;
+    const currentIds = new Set(myPlayer.hand.map((c) => c.id));
+    // Skip initial population (when prevHandIds is empty)
+    if (prevHandIdsRef.current.size > 0) {
+      const newIds = [...currentIds].filter((id) => !prevHandIdsRef.current.has(id));
+      if (newIds.length > 0) {
+        newCardOrderRef.current = newIds;
+        setNewCardIds(new Set(newIds));
+        const t = setTimeout(() => setNewCardIds(new Set()), 1200);
+        prevHandIdsRef.current = currentIds;
+        return () => clearTimeout(t);
+      }
+    }
+    prevHandIdsRef.current = currentIds;
+  }, [myPlayer?.hand]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Calculate total bank value
   const getBankValue = useCallback((player: MonopolyDealPlayer) => {
@@ -153,28 +177,34 @@ export function MonopolyDealBoard({
   }, [onAction]);
 
   // Handle playing a card
-  const handlePlayCard = useCallback((card: MonopolyDealCard) => {
-    if (!isMyTurn || phase !== "play") return;
+  const handlePlayCard = useCallback(
+    (card: MonopolyDealCard) => {
+      if (!isMyTurn || phase !== "play") return;
 
-    if (card.cardType === "money") {
-      onAction("play_money", { cardId: card.id });
-    } else if (card.cardType === "property") {
-      onAction("play_property", { cardId: card.id });
-    } else if (card.cardType === "wildcard") {
-      setSelectedCard(card);
-    } else if (card.cardType === "action" || card.cardType === "rent") {
-      setSelectedCard(card);
-    }
-  }, [isMyTurn, phase, onAction]);
+      if (card.cardType === "money") {
+        onAction("play_money", { cardId: card.id });
+      } else if (card.cardType === "property") {
+        onAction("play_property", { cardId: card.id });
+      } else if (card.cardType === "wildcard") {
+        setSelectedCard(card);
+      } else if (card.cardType === "action" || card.cardType === "rent") {
+        setSelectedCard(card);
+      }
+    },
+    [isMyTurn, phase, onAction]
+  );
 
   // Handle wildcard color selection
-  const handleSelectWildcardColor = useCallback((color: string) => {
-    if (selectedCard) {
-      onAction("play_property", { cardId: selectedCard.id, targetColor: color });
-      setSelectedCard(null);
-      setTargetColor(null);
-    }
-  }, [selectedCard, onAction]);
+  const handleSelectWildcardColor = useCallback(
+    (color: string) => {
+      if (selectedCard) {
+        onAction("play_property", { cardId: selectedCard.id, targetColor: color });
+        setSelectedCard(null);
+        setTargetColor(null);
+      }
+    },
+    [selectedCard, onAction]
+  );
 
   // Handle action card execution
   const handleExecuteAction = useCallback(() => {
@@ -194,15 +224,37 @@ export function MonopolyDealBoard({
   }, [selectedCard, targetPlayer, targetCard, targetColor, onAction]);
 
   // Handle response to action
-  const handleRespond = useCallback((response: "accept" | "just_say_no") => {
-    onAction("respond", { response });
-  }, [onAction]);
+  const handleRespond = useCallback(
+    (response: "accept" | "just_say_no") => {
+      onAction("respond", { response });
+    },
+    [onAction]
+  );
 
   // Handle payment
   const handlePay = useCallback(() => {
+    if (myPlayer && paymentCards.length > 0) {
+      const paying: MonopolyDealCard[] = [];
+      for (const id of paymentCards) {
+        const bc = myPlayer.bank.find((c) => c.id === id);
+        if (bc) {
+          paying.push(bc);
+          continue;
+        }
+        for (const set of myPlayer.propertySets) {
+          const pc = set.cards.find((c) => c.id === id);
+          if (pc) {
+            paying.push(pc);
+            break;
+          }
+        }
+      }
+      setAnimatingPayCards(paying);
+      setTimeout(() => setAnimatingPayCards([]), 800);
+    }
     onAction("pay", { cardIds: paymentCards });
     setPaymentCards([]);
-  }, [onAction, paymentCards]);
+  }, [onAction, paymentCards, myPlayer]);
 
   // Handle discard
   const handleDiscard = useCallback(() => {
@@ -217,25 +269,21 @@ export function MonopolyDealBoard({
 
   // Toggle payment card
   const togglePaymentCard = useCallback((cardId: string) => {
-    setPaymentCards(prev =>
-      prev.includes(cardId)
-        ? prev.filter(id => id !== cardId)
-        : [...prev, cardId]
+    setPaymentCards((prev) =>
+      prev.includes(cardId) ? prev.filter((id) => id !== cardId) : [...prev, cardId]
     );
   }, []);
 
   // Toggle discard card
   const toggleDiscardCard = useCallback((cardId: string) => {
-    setDiscardCards(prev =>
-      prev.includes(cardId)
-        ? prev.filter(id => id !== cardId)
-        : [...prev, cardId]
+    setDiscardCards((prev) =>
+      prev.includes(cardId) ? prev.filter((id) => id !== cardId) : [...prev, cardId]
     );
   }, []);
 
   // Check if player has Just Say No
   const hasJustSayNo = useMemo(() => {
-    return myPlayer?.hand.some(c => c.actionType === "just_say_no") || false;
+    return myPlayer?.hand.some((c) => c.actionType === "just_say_no") || false;
   }, [myPlayer]);
 
   // Calculate selected payment total
@@ -243,13 +291,13 @@ export function MonopolyDealBoard({
     if (!myPlayer) return 0;
     let total = 0;
     for (const cardId of paymentCards) {
-      const bankCard = myPlayer.bank.find(c => c.id === cardId);
+      const bankCard = myPlayer.bank.find((c) => c.id === cardId);
       if (bankCard) {
         total += bankCard.value;
         continue;
       }
       for (const set of myPlayer.propertySets) {
-        const propCard = set.cards.find(c => c.id === cardId);
+        const propCard = set.cards.find((c) => c.id === cardId);
         if (propCard) {
           total += propCard.value;
           break;
@@ -268,7 +316,10 @@ export function MonopolyDealBoard({
             <span className="text-success">Your turn!</span>
           ) : (
             <span className="text-surface-400">
-              Waiting for {Array.from(players.values()).find(p => p.id === currentTurnId)?.displayName || "opponent"}...
+              Waiting for{" "}
+              {Array.from(players.values()).find((p) => p.id === currentTurnId)?.displayName ||
+                "opponent"}
+              ...
             </span>
           )}
         </div>
@@ -292,7 +343,11 @@ export function MonopolyDealBoard({
               <div className="text-center mb-6">
                 <p className="text-surface-300">
                   <span className="text-primary-400 font-medium">
-                    {Array.from(players.values()).find(p => p.id === currentAction.sourcePlayerId)?.displayName}
+                    {
+                      Array.from(players.values()).find(
+                        (p) => p.id === currentAction.sourcePlayerId
+                      )?.displayName
+                    }
                   </span>
                   {" played "}
                   <span className="text-warning font-medium capitalize">
@@ -341,16 +396,20 @@ export function MonopolyDealBoard({
                 Select cards to pay (no change given)
               </p>
               <p className="text-center text-lg mb-4">
-                Selected: <span className={paymentTotal >= myPlayer.amountOwed ? "text-success" : "text-error"}>
+                Selected:{" "}
+                <span
+                  className={paymentTotal >= myPlayer.amountOwed ? "text-success" : "text-error"}
+                >
                   ${paymentTotal}M
-                </span> / ${myPlayer.amountOwed}M
+                </span>{" "}
+                / ${myPlayer.amountOwed}M
               </p>
 
               {/* Bank cards */}
               <div className="mb-4">
                 <h4 className="text-sm text-surface-400 mb-2">Bank</h4>
                 <div className="flex flex-wrap gap-2">
-                  {myPlayer.bank.map(card => (
+                  {myPlayer.bank.map((card) => (
                     <motion.button
                       key={card.id}
                       whileHover={{ scale: 1.05 }}
@@ -374,7 +433,7 @@ export function MonopolyDealBoard({
                     {COLOR_NAMES[set.color]}
                   </h4>
                   <div className="flex flex-wrap gap-2">
-                    {set.cards.map(card => (
+                    {set.cards.map((card) => (
                       <motion.button
                         key={card.id}
                         whileHover={{ scale: 1.05 }}
@@ -397,7 +456,9 @@ export function MonopolyDealBoard({
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handlePay}
-                disabled={paymentTotal < myPlayer.amountOwed && getTotalAssets(myPlayer) > paymentTotal}
+                disabled={
+                  paymentTotal < myPlayer.amountOwed && getTotalAssets(myPlayer) > paymentTotal
+                }
                 className="w-full mt-4 px-6 py-3 bg-success text-white rounded-xl font-medium disabled:opacity-50"
               >
                 Pay ${paymentTotal}M
@@ -409,15 +470,17 @@ export function MonopolyDealBoard({
 
       {/* Opponents */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {opponents.map(opponent => (
+        {opponents.map((opponent) => (
           <OpponentArea
             key={opponent.id}
             player={opponent}
             isCurrentTurn={opponent.id === currentTurnId}
-            isTargetable={selectedCard?.actionType === "debt_collector" || 
-                          selectedCard?.actionType === "sly_deal" ||
-                          selectedCard?.actionType === "forced_deal" ||
-                          selectedCard?.actionType === "deal_breaker"}
+            isTargetable={
+              selectedCard?.actionType === "debt_collector" ||
+              selectedCard?.actionType === "sly_deal" ||
+              selectedCard?.actionType === "forced_deal" ||
+              selectedCard?.actionType === "deal_breaker"
+            }
             isSelected={targetPlayer === opponent.id}
             onSelect={() => setTargetPlayer(opponent.id)}
             onSelectCard={(cardId) => setTargetCard(cardId)}
@@ -433,7 +496,9 @@ export function MonopolyDealBoard({
           whileHover={isMyTurn && phase === "draw" ? { scale: 1.05 } : {}}
           onClick={isMyTurn && phase === "draw" ? handleDraw : undefined}
           className={`w-24 h-36 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 flex flex-col items-center justify-center shadow-lg ${
-            isMyTurn && phase === "draw" ? "cursor-pointer ring-2 ring-primary-500 animate-pulse" : ""
+            isMyTurn && phase === "draw"
+              ? "cursor-pointer ring-2 ring-primary-500 animate-pulse"
+              : ""
           }`}
         >
           <span className="text-3xl mb-1">🃏</span>
@@ -479,7 +544,7 @@ export function MonopolyDealBoard({
           >
             <p className="text-center text-sm text-surface-400 mb-3">Select color for wildcard:</p>
             <div className="flex flex-wrap gap-2 justify-center">
-              {selectedCard.colors?.map(color => (
+              {selectedCard.colors?.map((color) => (
                 <motion.button
                   key={color}
                   whileHover={{ scale: 1.1 }}
@@ -502,119 +567,148 @@ export function MonopolyDealBoard({
 
       {/* Action Target Selection */}
       <AnimatePresence>
-        {selectedCard && (selectedCard.cardType === "action" || selectedCard.cardType === "rent") && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="bg-surface-800 rounded-xl p-4 mx-auto max-w-md"
-          >
-            <p className="text-center font-medium mb-3 capitalize">
-              {selectedCard.actionType?.replace(/_/g, " ") || selectedCard.name}
-            </p>
+        {selectedCard &&
+          (selectedCard.cardType === "action" || selectedCard.cardType === "rent") && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="bg-surface-800 rounded-xl p-4 mx-auto max-w-md"
+            >
+              <p className="text-center font-medium mb-3 capitalize">
+                {selectedCard.actionType?.replace(/_/g, " ") || selectedCard.name}
+              </p>
 
-            {/* Rent color selection */}
-            {selectedCard.cardType === "rent" && (
-              <div className="mb-4">
-                <p className="text-sm text-surface-400 mb-2">Select property color:</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {(selectedCard.colors || []).map(color => {
-                    const hasColor = myPlayer?.propertySets.some(ps => ps.color === color && ps.cards.length > 0);
-                    return (
-                      <motion.button
-                        key={color}
-                        whileHover={hasColor ? { scale: 1.1 } : {}}
-                        onClick={() => hasColor && setTargetColor(color)}
-                        disabled={!hasColor}
-                        className={`w-10 h-10 rounded-lg ${targetColor === color ? "ring-2 ring-white" : ""} ${!hasColor ? "opacity-30" : ""}`}
-                        style={{ backgroundColor: COLOR_MAP[color] }}
-                        title={COLOR_NAMES[color]}
-                      />
-                    );
-                  })}
+              {/* Rent color selection */}
+              {selectedCard.cardType === "rent" && (
+                <div className="mb-4">
+                  <p className="text-sm text-surface-400 mb-2">Select property color:</p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {(selectedCard.colors || []).map((color) => {
+                      const hasColor = myPlayer?.propertySets.some(
+                        (ps) => ps.color === color && ps.cards.length > 0
+                      );
+                      return (
+                        <motion.button
+                          key={color}
+                          whileHover={hasColor ? { scale: 1.1 } : {}}
+                          onClick={() => hasColor && setTargetColor(color)}
+                          disabled={!hasColor}
+                          className={`w-10 h-10 rounded-lg ${targetColor === color ? "ring-2 ring-white" : ""} ${!hasColor ? "opacity-30" : ""}`}
+                          style={{ backgroundColor: COLOR_MAP[color] }}
+                          title={COLOR_NAMES[color]}
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Target player selection for targeted actions */}
-            {(selectedCard.actionType === "debt_collector" || 
-              selectedCard.actionType === "sly_deal" ||
-              selectedCard.actionType === "forced_deal" ||
-              selectedCard.actionType === "deal_breaker") && (
-              <div className="mb-4">
-                <p className="text-sm text-surface-400 mb-2">Select target player:</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {opponents.map(opp => (
-                    <motion.button
-                      key={opp.id}
-                      whileHover={{ scale: 1.05 }}
-                      onClick={() => setTargetPlayer(opp.id)}
-                      className={`px-4 py-2 rounded-lg text-sm ${
-                        targetPlayer === opp.id
-                          ? "bg-primary-500 text-white"
-                          : "bg-surface-700 text-surface-200"
-                      }`}
-                    >
-                      {opp.displayName}
-                    </motion.button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* House/Hotel color selection */}
-            {(selectedCard.actionType === "house" || selectedCard.actionType === "hotel") && (
-              <div className="mb-4">
-                <p className="text-sm text-surface-400 mb-2">
-                  Select complete set to add {selectedCard.actionType}:
-                </p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {myPlayer?.propertySets
-                    .filter(ps => ps.isComplete && (selectedCard.actionType === "house" ? !ps.hasHouse : ps.hasHouse && !ps.hasHotel))
-                    .map(ps => (
+              {/* Target player selection for targeted actions */}
+              {(selectedCard.actionType === "debt_collector" ||
+                selectedCard.actionType === "sly_deal" ||
+                selectedCard.actionType === "forced_deal" ||
+                selectedCard.actionType === "deal_breaker") && (
+                <div className="mb-4">
+                  <p className="text-sm text-surface-400 mb-2">Select target player:</p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {opponents.map((opp) => (
                       <motion.button
-                        key={ps.color}
-                        whileHover={{ scale: 1.1 }}
-                        onClick={() => setTargetColor(ps.color)}
-                        className={`w-10 h-10 rounded-lg ${targetColor === ps.color ? "ring-2 ring-white" : ""}`}
-                        style={{ backgroundColor: COLOR_MAP[ps.color] }}
-                        title={COLOR_NAMES[ps.color]}
-                      />
+                        key={opp.id}
+                        whileHover={{ scale: 1.05 }}
+                        onClick={() => setTargetPlayer(opp.id)}
+                        className={`px-4 py-2 rounded-lg text-sm ${
+                          targetPlayer === opp.id
+                            ? "bg-primary-500 text-white"
+                            : "bg-surface-700 text-surface-200"
+                        }`}
+                      >
+                        {opp.displayName}
+                      </motion.button>
                     ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div className="flex gap-4 justify-center mt-4">
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleExecuteAction}
-                disabled={
-                  (selectedCard.actionType === "debt_collector" && !targetPlayer) ||
-                  (selectedCard.actionType === "sly_deal" && (!targetPlayer || !targetCard)) ||
-                  (selectedCard.cardType === "rent" && !targetColor)
-                }
-                className="px-6 py-2 bg-success text-white rounded-xl disabled:opacity-50"
-              >
-                Play
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => {
-                  setSelectedCard(null);
-                  setTargetPlayer(null);
-                  setTargetCard(null);
-                  setTargetColor(null);
-                }}
-                className="px-6 py-2 bg-surface-700 text-white rounded-xl"
-              >
-                Cancel
-              </motion.button>
-            </div>
+              {/* House/Hotel color selection */}
+              {(selectedCard.actionType === "house" || selectedCard.actionType === "hotel") && (
+                <div className="mb-4">
+                  <p className="text-sm text-surface-400 mb-2">
+                    Select complete set to add {selectedCard.actionType}:
+                  </p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {myPlayer?.propertySets
+                      .filter(
+                        (ps) =>
+                          ps.isComplete &&
+                          (selectedCard.actionType === "house"
+                            ? !ps.hasHouse
+                            : ps.hasHouse && !ps.hasHotel)
+                      )
+                      .map((ps) => (
+                        <motion.button
+                          key={ps.color}
+                          whileHover={{ scale: 1.1 }}
+                          onClick={() => setTargetColor(ps.color)}
+                          className={`w-10 h-10 rounded-lg ${targetColor === ps.color ? "ring-2 ring-white" : ""}`}
+                          style={{ backgroundColor: COLOR_MAP[ps.color] }}
+                          title={COLOR_NAMES[ps.color]}
+                        />
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-4 justify-center mt-4">
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleExecuteAction}
+                  disabled={
+                    (selectedCard.actionType === "debt_collector" && !targetPlayer) ||
+                    (selectedCard.actionType === "sly_deal" && (!targetPlayer || !targetCard)) ||
+                    (selectedCard.cardType === "rent" && !targetColor)
+                  }
+                  className="px-6 py-2 bg-success text-white rounded-xl disabled:opacity-50"
+                >
+                  Play
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    setSelectedCard(null);
+                    setTargetPlayer(null);
+                    setTargetCard(null);
+                    setTargetColor(null);
+                  }}
+                  className="px-6 py-2 bg-surface-700 text-white rounded-xl"
+                >
+                  Cancel
+                </motion.button>
+              </div>
+            </motion.div>
+          )}
+      </AnimatePresence>
+
+      {/* Payment flight animation overlay */}
+      <AnimatePresence>
+        {animatingPayCards.map((card, idx) => (
+          <motion.div
+            key={`pay-fly-${card.id}`}
+            className="fixed z-[70] pointer-events-none"
+            style={{
+              left: `calc(50% + ${(idx - (animatingPayCards.length - 1) / 2) * 48}px)`,
+              bottom: "33%",
+            }}
+            initial={{ opacity: 1, y: 0, scale: 1 }}
+            animate={{ opacity: 0, y: -260, scale: 0.35 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.55, delay: idx * 0.1, ease: "easeIn" }}
+          >
+            <CardDisplay card={card} />
           </motion.div>
-        )}
+        ))}
       </AnimatePresence>
 
       {/* My Hand & Properties */}
@@ -623,12 +717,12 @@ export function MonopolyDealBoard({
           {/* Stats */}
           <div className="flex justify-between items-center mb-4">
             <div>
-              <span className="text-lg font-bold text-primary-400">{myPlayer.completeSets}/3 Sets</span>
+              <span className="text-lg font-bold text-primary-400">
+                {myPlayer.completeSets}/3 Sets
+              </span>
               <span className="text-surface-400 ml-3">Bank: ${getBankValue(myPlayer)}M</span>
             </div>
-            <div className="text-sm text-surface-400">
-              {myPlayer.hand.length} cards in hand
-            </div>
+            <div className="text-sm text-surface-400">{myPlayer.hand.length} cards in hand</div>
           </div>
 
           {/* My Properties */}
@@ -648,14 +742,20 @@ export function MonopolyDealBoard({
           <div className="mb-4">
             <h4 className="text-sm text-surface-400 mb-2">Your Bank</h4>
             <div className="flex flex-wrap gap-2">
-              {myPlayer.bank.map(card => (
-                <motion.div
-                  key={card.id}
-                  className="w-12 h-16 rounded-lg bg-gradient-to-br from-green-600 to-green-800 flex items-center justify-center text-white font-bold shadow"
-                >
-                  ${card.value}M
-                </motion.div>
-              ))}
+              <AnimatePresence>
+                {myPlayer.bank.map((card) => (
+                  <motion.div
+                    key={card.id}
+                    initial={{ opacity: 0, y: -60, scale: 0.5 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.3, transition: { duration: 0.2 } }}
+                    transition={{ type: "spring", stiffness: 250, damping: 22 }}
+                    className="w-12 h-16 rounded-lg bg-gradient-to-br from-green-600 to-green-800 flex items-center justify-center text-white font-bold shadow"
+                  >
+                    ${card.value}M
+                  </motion.div>
+                ))}
+              </AnimatePresence>
               {myPlayer.bank.length === 0 && (
                 <span className="text-surface-500 text-sm">No money in bank</span>
               )}
@@ -687,27 +787,49 @@ export function MonopolyDealBoard({
           <div>
             <h4 className="text-sm text-surface-400 mb-2">Your Hand</h4>
             <div className="flex flex-wrap gap-2">
-              {myPlayer.hand.map((card, idx) => (
-                <motion.div
-                  key={card.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.05 }}
-                  whileHover={isMyTurn && phase === "play" ? { scale: 1.1, y: -10 } : {}}
-                  onClick={() => {
-                    if (phase === "discard") {
-                      toggleDiscardCard(card.id);
-                    } else if (isMyTurn && phase === "play" && myPlayer.actionsRemaining > 0) {
-                      handlePlayCard(card);
-                    }
-                  }}
-                  className={`cursor-pointer ${
-                    discardCards.includes(card.id) ? "ring-2 ring-warning" : ""
-                  } ${selectedCard?.id === card.id ? "ring-2 ring-primary-500" : ""}`}
-                >
-                  <CardDisplay card={card} />
-                </motion.div>
-              ))}
+              <AnimatePresence>
+                {myPlayer.hand.map((card, idx) => {
+                  const isNewlyDrawn = newCardIds.has(card.id);
+                  const drawOrder = newCardOrderRef.current.indexOf(card.id);
+                  const drawDelay = drawOrder >= 0 ? drawOrder * 0.12 : 0;
+                  return (
+                    <motion.div
+                      key={card.id}
+                      initial={
+                        isNewlyDrawn
+                          ? { opacity: 0, y: -280, x: 0, scale: 0.25, rotate: -12 }
+                          : { opacity: 0, y: 20 }
+                      }
+                      animate={{ opacity: 1, y: 0, x: 0, scale: 1, rotate: 0 }}
+                      exit={{
+                        opacity: 0,
+                        y: -140,
+                        scale: 0.4,
+                        rotate: 8,
+                        transition: { duration: 0.28 },
+                      }}
+                      transition={
+                        isNewlyDrawn
+                          ? { type: "spring", stiffness: 170, damping: 22, delay: drawDelay }
+                          : { delay: idx * 0.05 }
+                      }
+                      whileHover={isMyTurn && phase === "play" ? { scale: 1.1, y: -10 } : {}}
+                      onClick={() => {
+                        if (phase === "discard") {
+                          toggleDiscardCard(card.id);
+                        } else if (isMyTurn && phase === "play" && myPlayer.actionsRemaining > 0) {
+                          handlePlayCard(card);
+                        }
+                      }}
+                      className={`cursor-pointer ${
+                        discardCards.includes(card.id) ? "ring-2 ring-warning" : ""
+                      } ${selectedCard?.id === card.id ? "ring-2 ring-primary-500" : ""}`}
+                    >
+                      <CardDisplay card={card} />
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
               {myPlayer.hand.length === 0 && (
                 <span className="text-surface-500 text-sm">Hand is empty</span>
               )}
@@ -758,7 +880,7 @@ function OpponentArea({
       <div className="flex flex-wrap gap-1">
         {player.propertySets.map((set, idx) => (
           <div key={idx} className="flex flex-col gap-0.5">
-            {set.cards.map(card => (
+            {set.cards.map((card) => (
               <motion.div
                 key={card.id}
                 whileHover={isSelected ? { scale: 1.1 } : {}}
@@ -785,8 +907,10 @@ function PropertySetDisplay({ set }: { set: PropertySet }) {
   const required = SET_REQUIREMENTS[set.color] || 3;
 
   return (
-    <div className={`p-2 rounded-lg ${set.isComplete ? "ring-2 ring-success" : ""}`}
-         style={{ backgroundColor: COLOR_MAP[set.color] + "30" }}>
+    <div
+      className={`p-2 rounded-lg ${set.isComplete ? "ring-2 ring-success" : ""}`}
+      style={{ backgroundColor: COLOR_MAP[set.color] + "30" }}
+    >
       <div className="flex items-center gap-1 mb-1">
         <div className="w-4 h-4 rounded" style={{ backgroundColor: COLOR_MAP[set.color] }} />
         <span className="text-xs text-surface-200">
@@ -796,7 +920,7 @@ function PropertySetDisplay({ set }: { set: PropertySet }) {
         {set.hasHotel && <span className="text-xs">🏨</span>}
       </div>
       <div className="flex flex-wrap gap-0.5">
-        {set.cards.map(card => (
+        {set.cards.map((card) => (
           <div key={card.id} className="text-xs text-surface-300 truncate max-w-16">
             {card.name.split(" ")[0]}
           </div>
@@ -839,17 +963,20 @@ function CardDisplay({ card }: { card: MonopolyDealCard }) {
           {card.name.length > 15 ? card.name.slice(0, 15) + "..." : card.name}
         </span>
       </div>
-      <div className="text-[8px] opacity-70 capitalize text-center">
-        {card.cardType}
-      </div>
+      <div className="text-[8px] opacity-70 capitalize text-center">{card.cardType}</div>
     </div>
   );
 }
 
 function CardMini({ card }: { card: MonopolyDealCard }) {
-  const bgColor = card.cardType === "property" ? COLOR_MAP[card.color || "brown"] : 
-                  card.cardType === "money" ? "#22c55e" :
-                  card.cardType === "action" ? "#f59e0b" : "#8b5cf6";
+  const bgColor =
+    card.cardType === "property"
+      ? COLOR_MAP[card.color || "brown"]
+      : card.cardType === "money"
+        ? "#22c55e"
+        : card.cardType === "action"
+          ? "#f59e0b"
+          : "#8b5cf6";
 
   return (
     <div

@@ -396,12 +396,29 @@ export function Connect4Board({
                             <motion.div
                               key="pending"
                               data-testid={`pending-disc-${col}-${row}`}
-                              initial={{ y: "-700%", opacity: 0.9 }}
-                              animate={{ y: 0, opacity: 1 }}
+                              initial={{ y: "-700%", scaleX: 1, scaleY: 1, opacity: 0.9 }}
+                              animate={{
+                                y: 0,
+                                scaleX: [1, 1, 1.18, 1],
+                                scaleY: [1, 1, 0.82, 1],
+                                opacity: 1,
+                              }}
                               exit={{ opacity: 0 }}
                               transition={{
-                                y: { type: "spring", stiffness: 260, damping: 22 },
-                                opacity: { duration: 0.1 },
+                                y: { type: "spring", stiffness: 480, damping: 28, mass: 1.1 },
+                                scaleX: {
+                                  duration: 0.18,
+                                  times: [0, 0.45, 0.68, 1],
+                                  delay: 0.16,
+                                  ease: ["linear", "easeOut", "easeInOut"],
+                                },
+                                scaleY: {
+                                  duration: 0.18,
+                                  times: [0, 0.45, 0.68, 1],
+                                  delay: 0.16,
+                                  ease: ["linear", "easeOut", "easeInOut"],
+                                },
+                                opacity: { duration: 0.08 },
                               }}
                               className={`
                                 absolute inset-0 rounded-full
@@ -416,9 +433,22 @@ export function Connect4Board({
                         {/* Confirmed placed disc */}
                         {cell !== 0 && (
                           <motion.div
-                            initial={{ scale: 0, y: -50 }}
-                            animate={{ scale: 1, y: 0 }}
-                            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                            initial={
+                              isLastMove
+                                ? { scale: 0.92, y: -10, scaleX: 1.16, scaleY: 0.84 }
+                                : { scale: 0, y: -50 }
+                            }
+                            animate={{ scale: 1, y: 0, scaleX: 1, scaleY: 1 }}
+                            transition={
+                              isLastMove
+                                ? {
+                                    scale: { type: "spring", stiffness: 480, damping: 30 },
+                                    y: { type: "spring", stiffness: 480, damping: 30 },
+                                    scaleX: { duration: 0.18, ease: "easeInOut" },
+                                    scaleY: { duration: 0.18, ease: "easeInOut" },
+                                  }
+                                : { type: "spring", stiffness: 480, damping: 30 }
+                            }
                             className={`
                               absolute inset-0 rounded-full
                               ${cell === 1 ? "bg-player1" : "bg-player2"}

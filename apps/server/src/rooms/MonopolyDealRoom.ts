@@ -9,6 +9,8 @@ import {
 } from "@multiplayer/shared";
 import { BaseRoom, type JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
+import { MonopolyDealBot } from "../bots/MonopolyDealBot.js";
+import type { BotAgent } from "../bots/BotAgent.js";
 
 // Property set requirements (how many cards complete a set)
 const SET_REQUIREMENTS: Record<string, number> = {
@@ -298,6 +300,12 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
 
     this.state.players.set(client.sessionId, player);
 
+    // BUG-14 fix: populate initialPlayers so BaseRoom.nextTurn() can cycle turns.
+    // Without this, nextTurn() returns early (initialPlayerIds.length === 0).
+    if (this.state.status === "waiting") {
+      this.initialPlayers.add(client.sessionId);
+    }
+
     logger.info(
       { roomId: this.roomId, playerId: client.sessionId, playerName: player.displayName },
       "Player joined Monopoly Deal"
@@ -321,8 +329,12 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     this.state.status = "in_progress";
     this.state.phase = "draw";
 
-    const playerIds = Array.from(this.state.players.keys());
-    this.state.currentTurnId = playerIds[0];
+    // Sync initialPlayers so BaseRoom.nextTurn() can rotate correctly.
+    // MonopolyDealRoom.onJoin() bypasses BaseRoom.onJoin(), so initialPlayers
+    // is empty unless we populate it here (same pattern as CatanRoom).
+    this.initialPlayers = new Set(this.state.players.keys());
+    const playerIds = Array.from(this.initialPlayers);
+    this.state.currentTurnId = playerIds[Math.floor(Math.random() * playerIds.length)];
     this.state.turnStartedAt = Date.now();
 
     // Set actions remaining for first player
@@ -334,6 +346,37 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     logger.info({ roomId: this.roomId }, "Monopoly Deal game started");
     this.broadcast("game_started", { firstPlayer: this.state.currentTurnId });
     this.startTurnTimer();
+  }
+
+  // BUG-14 fix: respond and pay come from the *target* player, not the current-turn
+  // player. BaseRoom.handleMoveMessage blocks any move from a non-currentTurnId
+  // client, so we override it to relax that guard for those two actions only.
+  protected async handleMoveMessage(client: Client, data: unknown): Promise<void> {
+    const movingPlayer = this.state.players.get(client.sessionId);
+    if (movingPlayer?.isSpectator) {
+      client.send("error", { message: "Spectators cannot make moves" });
+      return;
+    }
+
+    if (this.state.status !== "in_progress") {
+      client.send("error", { message: "Game is not in progress" });
+      return;
+    }
+
+    const moveData = data as ActionData;
+    const isOutOfTurnAction = moveData?.action === "respond" || moveData?.action === "pay";
+
+    if (!isOutOfTurnAction && this.state.currentTurnId !== client.sessionId) {
+      client.send("error", { message: "Not your turn" });
+      return;
+    }
+
+    this.handleMove(client, data);
+
+    const result = this.checkWinCondition();
+    if (result) {
+      await this.endGame(result.winner, result.isDraw);
+    }
   }
 
   handleMove(client: Client, data: unknown): void {
@@ -559,6 +602,17 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
         break;
       case "hotel":
         this.executeHotel(client, player, card, cardIndex, data);
+        break;
+      case "double_the_rent":
+        // Must follow a rent card; standalone play discards it as a $1 action
+        player.hand.splice(cardIndex, 1);
+        this.state.discardPile.push(card);
+        player.actionsRemaining--;
+        this.broadcast("action_played", {
+          playerId: client.sessionId,
+          actionType: "double_the_rent",
+        });
+        this.checkEndTurn(client, player);
         break;
       default:
         if (card.cardType === "rent") {
@@ -1143,13 +1197,16 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
     );
 
     if (!anyDebtRemaining) {
+      // BUG-14 fix: reset phase from "pay" to "play" so the current-turn player
+      // can continue their remaining actions after all debts are settled.
+      this.state.phase = "play";
       const currentPlayer = this.state.players.get(
         this.state.currentTurnId
       ) as MonopolyDealPlayerSchema;
-      this.checkEndTurn(
-        this.clients.find((c) => c.sessionId === this.state.currentTurnId)!,
-        currentPlayer
-      );
+      const currentClient = this.clients.find((c) => c.sessionId === this.state.currentTurnId);
+      if (currentClient && currentPlayer) {
+        this.checkEndTurn(currentClient, currentPlayer);
+      }
     }
   }
 
@@ -1289,15 +1346,18 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
       return;
     }
 
-    // If no actions remaining or passed, check for discard
-    if (player.actionsRemaining <= 0 || this.state.phase === "play") {
+    // Only evaluate turn-end when the player has exhausted their actions.
+    // BUG-14 fix: the old condition `actionsRemaining <= 0 || phase === "play"`
+    // entered the discard-check block after every single play-phase action,
+    // prematurely triggering discard phase while actions were still remaining.
+    if (player.actionsRemaining <= 0) {
       if (player.hand.length > 7) {
         this.state.phase = "discard";
         this.broadcast("must_discard", {
           playerId: client.sessionId,
           count: player.hand.length - 7,
         });
-      } else if (player.actionsRemaining <= 0) {
+      } else {
         this.endTurn(client.sessionId);
       }
     }
@@ -1332,5 +1392,136 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
       }
     }
     return null;
+  }
+
+  protected createLobbyBotPlayerSchema(
+    _botId: string,
+    _botName: string,
+    _difficulty: string
+  ): import("@multiplayer/shared").GamePlayerSchema {
+    const bot = new MonopolyDealPlayerSchema();
+    bot.actionsRemaining = 0;
+    return bot;
+  }
+
+  protected createLobbyBotAgent(botId: string, difficulty: string): BotAgent {
+    return new MonopolyDealBot(botId, {
+      difficulty: difficulty as "easy" | "medium" | "hard",
+    });
+  }
+
+  private isLobbyBotScheduled = false;
+
+  protected scheduleLobbyBotMoveIfNeeded(): void {
+    if (this.state.status !== "in_progress") return;
+
+    // Check if there's a pending respond action for a lobby bot
+    const respondPhase = this.state as unknown as { phase?: string; activeResponderId?: string };
+    if (respondPhase.phase === "respond" && respondPhase.activeResponderId) {
+      const respondAgent = this.lobbyBotAgents.get(respondPhase.activeResponderId);
+      if (respondAgent && !this.isLobbyBotScheduled) {
+        this.scheduleLobbyBotResponse(
+          respondPhase.activeResponderId,
+          respondAgent as MonopolyDealBot
+        );
+        return;
+      }
+    }
+
+    const currentId = this.state.currentTurnId;
+    const agent = this.lobbyBotAgents.get(currentId) as MonopolyDealBot | undefined;
+    if (!agent) return;
+
+    if (this.isLobbyBotScheduled) return;
+    this.isLobbyBotScheduled = true;
+
+    const delay = 600 + Math.random() * 400;
+
+    this.clock.setTimeout(async () => {
+      if (this.state.status !== "in_progress" || this.state.currentTurnId !== currentId) {
+        this.isLobbyBotScheduled = false;
+        return;
+      }
+
+      try {
+        const gameState = this.buildMonopolyBotState();
+        const move = await agent.getMove(gameState);
+        const fakeClient = { sessionId: currentId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, move as unknown);
+
+        this.isLobbyBotScheduled = false;
+        // Re-schedule if still this bot's turn (chained actions within a turn)
+        if (this.state.status === "in_progress" && this.state.currentTurnId === currentId) {
+          this.scheduleLobbyBotMoveIfNeeded();
+        }
+      } catch (error) {
+        logger.error({ error, botId: currentId }, "MonopolyDeal lobby bot move failed");
+        this.isLobbyBotScheduled = false;
+        this.nextTurn();
+      }
+    }, delay);
+  }
+
+  private scheduleLobbyBotResponse(responderId: string, agent: MonopolyDealBot): void {
+    this.isLobbyBotScheduled = true;
+    const delay = 400 + Math.random() * 300;
+
+    this.clock.setTimeout(async () => {
+      const respondPhase = this.state as unknown as { phase?: string; activeResponderId?: string };
+      if (respondPhase.phase !== "respond" || respondPhase.activeResponderId !== responderId) {
+        this.isLobbyBotScheduled = false;
+        return;
+      }
+
+      try {
+        const gameState = this.buildMonopolyBotState();
+        const move = await agent.getMove(gameState);
+        const fakeClient = { sessionId: responderId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, move as unknown);
+      } catch {
+        // Default: accept the action
+        const fakeClient = { sessionId: responderId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, { action: "respond", response: "accept" });
+      } finally {
+        this.isLobbyBotScheduled = false;
+        this.scheduleLobbyBotMoveIfNeeded();
+      }
+    }, delay);
+  }
+
+  private buildMonopolyBotState(): unknown {
+    const players = new Map<string, unknown>();
+    for (const [id, player] of this.state.players) {
+      const p = player as MonopolyDealPlayerSchema;
+      players.set(id, {
+        id: p.id,
+        hand: Array.from(p.hand).map((c) => ({
+          id: c.id,
+          cardType: c.cardType,
+          value: c.value,
+          color: c.color,
+        })),
+        bank: Array.from(p.bank).map((c) => ({ id: c.id, cardType: c.cardType, value: c.value })),
+        propertySets: Array.from(p.propertySets).map((s) => ({
+          color: s.color,
+          cards: Array.from(s.cards).map((c) => ({
+            id: c.id,
+            cardType: c.cardType,
+            color: c.color,
+          })),
+          isComplete: s.isComplete,
+        })),
+        completeSets: p.completeSets,
+        actionsRemaining: p.actionsRemaining,
+        amountOwed: p.amountOwed,
+        owedToPlayerId: p.owedToPlayerId,
+      });
+    }
+
+    return {
+      currentTurnId: this.state.currentTurnId,
+      phase: (this.state as unknown as { phase?: string }).phase,
+      players,
+    };
   }
 }

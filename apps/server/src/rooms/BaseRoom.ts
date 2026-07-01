@@ -5,6 +5,8 @@ import { config } from "../config.js";
 import { historyService, type ParticipantIdentity } from "../services/historyService.js";
 import { lobbyService } from "../services/lobbyService.js";
 import { slugService } from "../services/slugService.js";
+import { BotTurnWatchdog } from "./BotTurnWatchdog.js";
+import type { BotAgent } from "../bots/BotAgent.js";
 
 export interface JoinOptions {
   playerName?: string;
@@ -27,6 +29,31 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   turnTimer: Delayed | null = null;
   initialPlayers: Set<string> = new Set(); // Players that were in the lobby at game start
   protected playerIdentities: Map<string, ParticipantIdentity> = new Map();
+  private botWatchdog: BotTurnWatchdog = new BotTurnWatchdog(
+    (cb, ms) => {
+      const delayed = this.clock.setTimeout(cb, ms);
+      return { clear: () => delayed.clear() };
+    },
+    (botId) => {
+      if (this.state.status !== "in_progress") return;
+      if (this.state.currentTurnId !== botId) return;
+      logger.warn(
+        { roomId: this.roomId, botId, timeoutMs: config.game.botTurnTimeoutMs },
+        "Bot turn watchdog: timeout — force-advancing turn"
+      );
+      this.nextTurn();
+    },
+    (botId, count) => {
+      logger.error(
+        { roomId: this.roomId, botId, consecutiveTurns: count },
+        "Bot turn watchdog: same bot exceeded max consecutive turns — force-advancing turn"
+      );
+    },
+    {
+      timeoutMs: config.game.botTurnTimeoutMs,
+      maxConsecutiveTurns: config.game.botMaxConsecutiveTurns,
+    }
+  );
   // Maps browserSessionId → sessionId for the current initialPlayer slot.
   // Used to evict ghost slots left behind by React StrictMode double-mount:
   // StrictMode cleanup sends a non-consented leave during the waiting phase,
@@ -37,6 +64,9 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
   protected roomSlug: string = ""; // Human-readable room code (e.g., "swift-blue-fox")
   protected hostSessionId: string = ""; // Track the host for kick/bot management
   maxPlayers: number = 2; // Authoritative seat count; set from onCreate options
+  // Lobby bots: agents for bots added to a human room via the host UI.
+  // Game room subclasses populate this via createLobbyBotAgent().
+  protected lobbyBotAgents: Map<string, BotAgent> = new Map();
 
   protected registerBotIdentity(botId: string, displayName: string): void {
     this.playerIdentities.set(botId, {
@@ -45,6 +75,44 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       isBot: true,
     });
   }
+
+  protected isBot(playerId: string): boolean {
+    return (
+      this.playerIdentities.get(playerId)?.isBot === true ||
+      this.state.players.get(playerId)?.isBot === true
+    );
+  }
+
+  /**
+   * Factory hook: creates the player schema for a lobby bot.
+   * Game rooms that use a sub-schema (e.g. SequencePlayer, SplendorPlayerSchema)
+   * must override this to return the correct subclass instance so that
+   * game-specific fields (hand, teamId, etc.) are included on the wire.
+   * Common fields (id, displayName, isBot, etc.) are set by handleAddBot after this.
+   */
+  protected createLobbyBotPlayerSchema(
+    _botId: string,
+    _botName: string,
+    _difficulty: string
+  ): GamePlayerSchema {
+    return new GamePlayerSchema();
+  }
+
+  /**
+   * Factory hook for lobby-bot support. Game room subclasses override this to
+   * return the appropriate bot agent when a host adds a bot to a human lobby.
+   * Returns null by default (no bot moves will be scheduled).
+   */
+  protected createLobbyBotAgent(_botId: string, _difficulty: string): BotAgent | null {
+    return null;
+  }
+
+  /**
+   * Scheduling hook called whenever the current turn transitions to a lobby bot.
+   * Game room subclasses override this to kick off bot move logic using the
+   * agent stored in `this.lobbyBotAgents`.
+   */
+  protected scheduleLobbyBotMoveIfNeeded(): void {}
 
   abstract initializeGame(): void;
   abstract handleMove(client: Client, data: unknown): void;
@@ -533,6 +601,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
 
   async onDispose(): Promise<void> {
     this.clearTurnTimer();
+    this.botWatchdog.clear();
     logger.info({ roomId: this.roomId }, "Room disposed");
   }
 
@@ -571,10 +640,15 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     // Delegate to game-specific handler
     this.handleMove(client, data);
 
-    // Check for win condition
-    const result = this.checkWinCondition();
-    if (result) {
-      await this.endGame(result.winner, result.isDraw);
+    // Check for win condition — only if the game is still running.
+    // Some rooms (e.g. BlackjackRoom) call checkWinCondition + endGame
+    // internally during handleMove, so we guard here to prevent a second
+    // endGame call that would double-broadcast game_ended.
+    if (this.state.status === "in_progress") {
+      const result = this.checkWinCondition();
+      if (result) {
+        await this.endGame(result.winner, result.isDraw);
+      }
     }
   }
 
@@ -706,6 +780,23 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
     // The client displays the timer based on turnStartedAt and turnTimeLimit.
     // Players can continue thinking without automatic forfeiture.
     this.clearTurnTimer();
+    // Start bot watchdog whenever a new turn begins
+    this.onTurnStarted();
+  }
+
+  private onTurnStarted(): void {
+    const currentPlayerId = this.state.currentTurnId;
+    if (!currentPlayerId) return;
+
+    if (this.isBot(currentPlayerId)) {
+      this.botWatchdog.startForBot(currentPlayerId);
+      // If this bot was added to a human lobby, trigger its move
+      if (this.lobbyBotAgents.has(currentPlayerId)) {
+        this.scheduleLobbyBotMoveIfNeeded();
+      }
+    } else {
+      this.botWatchdog.resetForHuman();
+    }
   }
 
   protected clearTurnTimer(): void {
@@ -729,6 +820,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
 
   protected async endGame(winnerId: string | null, isDraw: boolean): Promise<void> {
     this.clearTurnTimer();
+    this.botWatchdog.clear();
     this.state.status = "finished";
     this.state.winnerId = winnerId || "";
     this.state.isDraw = isDraw;
@@ -851,16 +943,23 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       return;
     }
 
+    // Check seat availability before adding bot
+    if (this.initialPlayers.size >= this.maxPlayers) {
+      client.send("error", { message: "Room is full" });
+      return;
+    }
+
     // Generate bot ID and name
     const botId = `bot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const botName = data.name || `Bot ${this.state.players.size + 1}`;
-    const difficulty = data.difficulty || "Medium";
+    const difficulty = (data.difficulty || "medium").toLowerCase();
 
-    // Create bot player
-    const bot = new GamePlayerSchema();
+    // Create bot player (subclass may return a game-specific schema type)
+    const bot = this.createLobbyBotPlayerSchema(botId, botName, difficulty);
     bot.id = botId;
     bot.displayName = botName;
     bot.isBot = true;
+    bot.botDifficulty = difficulty;
     bot.isReady = true; // Bots are always ready
     bot.isConnected = true;
     bot.joinedAt = Date.now();
@@ -874,6 +973,13 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
 
     // Register bot identity
     this.registerBotIdentity(botId, botName);
+
+    // Create game-specific bot agent (overridden per game room)
+    const agent = this.createLobbyBotAgent(botId, difficulty);
+    if (agent) {
+      this.lobbyBotAgents.set(botId, agent);
+      logger.info({ roomId: this.roomId, botId, difficulty }, "Lobby bot agent created");
+    }
 
     logger.info(
       {
@@ -939,6 +1045,7 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
       this.state.players.delete(playerId);
       this.initialPlayers.delete(playerId);
       this.playerIdentities.delete(playerId);
+      this.lobbyBotAgents.delete(playerId);
 
       logger.info(
         {

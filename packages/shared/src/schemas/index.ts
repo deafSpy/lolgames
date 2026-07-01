@@ -13,6 +13,7 @@ export class GamePlayerSchema extends Schema {
   @type("boolean") isSpectator: boolean = false;
   @type("boolean") wasInitialPlayer: boolean = false;
   @type("boolean") isHost: boolean = false; // First player to join becomes host
+  @type("string") botDifficulty: string = ""; // Only set when isBot=true; "easy"|"medium"|"hard"
 }
 
 /**
@@ -142,6 +143,8 @@ export class SequenceState extends Schema {
   @type("number") team2Sequences: number = 0;
   @type("number") sequencesToWin: number = 2;
   @type("number") deckRemaining: number = 104; // 2 decks
+  @type("number") discardPileCount: number = 0;
+  @type("string") lastDiscardedCard: string = "";
 }
 
 /**

@@ -8,6 +8,8 @@ import {
 } from "@multiplayer/shared";
 import { BaseRoom, type JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
+import { CatanBot } from "../bots/CatanBot.js";
+import type { BotAgent } from "../bots/BotAgent.js";
 
 type ResourceType = "wood" | "brick" | "wheat" | "sheep" | "ore";
 type TileType = ResourceType | "desert";
@@ -209,8 +211,9 @@ export class CatanRoom extends BaseRoom<CatanState> {
     this.state.phase = "setup";
     this.state.setupRound = 1;
 
-    // Set player order
+    // Set player order and sync initialPlayers so BaseRoom helpers (nextTurn, endGame) work correctly
     this.playerOrder = Array.from(this.state.players.keys());
+    this.initialPlayers = new Set(this.playerOrder);
     this.state.currentTurnId = this.playerOrder[0];
     this.state.turnStartedAt = Date.now();
 
@@ -518,12 +521,6 @@ export class CatanRoom extends BaseRoom<CatanState> {
         break;
       }
     }
-
-    // Check win after building
-    const result = this.checkWinCondition();
-    if (result) {
-      this.endGame(result.winner, result.isDraw);
-    }
   }
 
   private handleRobber(client: Client, data: RobberData): void {
@@ -703,5 +700,104 @@ export class CatanRoom extends BaseRoom<CatanState> {
       }
     }
     return null;
+  }
+
+  protected createLobbyBotPlayerSchema(
+    _botId: string,
+    _botName: string,
+    _difficulty: string
+  ): import("@multiplayer/shared").GamePlayerSchema {
+    const bot = new CatanPlayerSchema();
+    bot.wood = 0;
+    bot.brick = 0;
+    bot.wheat = 0;
+    bot.sheep = 0;
+    bot.ore = 0;
+    bot.points = 0;
+    return bot;
+  }
+
+  protected createLobbyBotAgent(botId: string, difficulty: string): BotAgent {
+    return new CatanBot(botId, {
+      difficulty: difficulty as "easy" | "medium" | "hard",
+    });
+  }
+
+  protected scheduleLobbyBotMoveIfNeeded(): void {
+    if (this.state.status !== "in_progress") return;
+
+    const currentId = this.state.currentTurnId;
+    const agent = this.lobbyBotAgents.get(currentId) as CatanBot | undefined;
+    if (!agent) return;
+
+    const delay = 800 + Math.random() * 600;
+
+    this.clock.setTimeout(async () => {
+      if (this.state.status !== "in_progress" || this.state.currentTurnId !== currentId) return;
+
+      try {
+        const gameState = this.buildCatanBotState();
+        const move = await agent.getMove(gameState);
+        if (!move || typeof move !== "object") return;
+
+        const fakeClient = { sessionId: currentId, send: () => {} } as unknown as Client;
+        await this.handleMoveMessage(fakeClient, move as unknown);
+
+        // Re-schedule if still this bot's turn (multi-phase like setup/robber)
+        if (this.state.status === "in_progress" && this.state.currentTurnId === currentId) {
+          this.scheduleLobbyBotMoveIfNeeded();
+        }
+      } catch (error) {
+        logger.error({ error, botId: currentId }, "Catan lobby bot move failed");
+        this.nextTurn();
+      }
+    }, delay);
+  }
+
+  private buildCatanBotState(): unknown {
+    const players = new Map<string, unknown>();
+    for (const [id, p] of this.state.players) {
+      const player = p as CatanPlayerSchema;
+      players.set(id, {
+        id: player.id,
+        wood: player.wood,
+        brick: player.brick,
+        wheat: player.wheat,
+        sheep: player.sheep,
+        ore: player.ore,
+        points: player.points,
+        roadsBuilt: player.roadsBuilt,
+        settlementsBuilt: player.settlementsBuilt,
+        citiesBuilt: player.citiesBuilt,
+        hasLongestRoad: player.hasLongestRoad,
+      });
+    }
+
+    const vertices = new Map<string, unknown>();
+    for (const [id, v] of this.state.vertices) {
+      vertices.set(id, { id: v.id, building: v.building, playerId: v.playerId });
+    }
+
+    const edges = new Map<string, unknown>();
+    for (const [id, e] of this.state.edges) {
+      edges.set(id, { id: e.id, hasRoad: e.hasRoad, playerId: e.playerId });
+    }
+
+    return {
+      phase: this.state.phase,
+      setupRound: this.state.setupRound,
+      lastDiceRoll: this.state.lastDiceRoll,
+      tiles: Array.from(this.state.tiles).map((t) => ({
+        q: t.q,
+        r: t.r,
+        tileType: t.tileType,
+        number: t.number,
+        hasRobber: t.hasRobber,
+      })),
+      vertices,
+      edges,
+      players,
+      currentTurnId: this.state.currentTurnId,
+    };
   }
 }

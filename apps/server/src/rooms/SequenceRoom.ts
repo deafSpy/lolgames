@@ -2,6 +2,8 @@ import { Client } from "@colyseus/core";
 import { SequenceState, SequencePlayer, SequenceCard, SequenceChip } from "@multiplayer/shared";
 import { BaseRoom, type JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
+import { SequenceBot } from "../bots/SequenceBot.js";
+import type { BotAgent } from "../bots/BotAgent.js";
 
 interface MoveData {
   cardIndex: number;
@@ -67,15 +69,31 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
     player.isReady = false;
     player.isConnected = true;
     player.joinedAt = Date.now();
+    player.isHost = false;
 
-    // Assign team based on player count
-    const playerCount = this.state.players.size;
-    player.teamId = playerCount % 2; // Alternating teams for now
+    // Spectator if game already started or all seats are taken
+    const seatsAreFull = this.initialPlayers.size >= this.maxPlayers;
+    const isSpectator =
+      this.state.status === "in_progress" || (this.state.status === "waiting" && seatsAreFull);
+    player.isSpectator = isSpectator;
+    player.wasInitialPlayer = !isSpectator;
+
+    if (!isSpectator && this.state.status === "waiting") {
+      // Assign team based on seat order so teams alternate: 0,1,0,1,...
+      player.teamId = this.initialPlayers.size % 2;
+
+      if (this.initialPlayers.size === 0) {
+        this.hostSessionId = client.sessionId;
+        player.isHost = true;
+      }
+      // Register in initialPlayers so startGame/nextTurn can cycle through them
+      this.initialPlayers.add(client.sessionId);
+    }
 
     this.state.players.set(client.sessionId, player);
 
     logger.info(
-      { roomId: this.roomId, playerId: client.sessionId, teamId: player.teamId },
+      { roomId: this.roomId, playerId: client.sessionId, teamId: player.teamId, isSpectator },
       "Player joined Sequence"
     );
 
@@ -87,11 +105,13 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
   protected startGame(): void {
     super.startGame();
 
-    // Deal cards to each player (7 cards for 2 players, 6 for 3, 5 for 4)
-    const handSize = this.clients.length === 2 ? 7 : this.clients.length === 3 ? 6 : 5;
+    // Deal cards only to seated (initial) players — 7 for 2p, 6 for 3p, 5 for 4p
+    const seatCount = this.initialPlayers.size;
+    const handSize = seatCount === 2 ? 7 : seatCount === 3 ? 6 : 5;
 
-    for (const [, player] of this.state.players) {
-      const p = player as SequencePlayer;
+    for (const sessionId of this.initialPlayers) {
+      const p = this.state.players.get(sessionId) as SequencePlayer | undefined;
+      if (!p) continue;
       for (let i = 0; i < handSize; i++) {
         this.drawCard(p);
       }
@@ -200,6 +220,18 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       this.placeChip(boardX, boardY, player.teamId);
     }
 
+    // Track discard before removing
+    const suitChar =
+      card.suit === "hearts"
+        ? "H"
+        : card.suit === "diamonds"
+          ? "D"
+          : card.suit === "clubs"
+            ? "C"
+            : "S";
+    this.state.lastDiscardedCard = `${card.rank}${suitChar}`;
+    this.state.discardPileCount += 1;
+
     // Remove card from hand
     player.hand.splice(cardIndex, 1);
 
@@ -211,6 +243,9 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       "Sequence move made"
     );
 
+    // Update sequence counts before broadcasting so clients get current state
+    this.checkSequences(player.teamId);
+
     this.broadcast("chip_placed", {
       playerId: client.sessionId,
       boardX,
@@ -218,17 +253,10 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       teamId: player.teamId,
     });
 
-    // Check for sequences
-    this.checkSequences(player.teamId);
-
-    // Check win condition
-    const result = this.checkWinCondition();
-    if (result) {
-      this.endGame(result.winner, result.isDraw);
-      return;
+    // Advance turn only when game continues; BaseRoom.handleMoveMessage handles endGame on win
+    if (!this.checkWinCondition()) {
+      this.nextTurn();
     }
-
-    this.nextTurn();
   }
 
   private placeChip(x: number, y: number, teamId: number): void {
@@ -396,6 +424,125 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       const x = startX + i * dx;
       const y = startY + i * dy;
       usedInSequence.add(`${x},${y}`);
+    }
+  }
+
+  protected createLobbyBotPlayerSchema(
+    _botId: string,
+    _botName: string,
+    _difficulty: string
+  ): import("@multiplayer/shared").GamePlayerSchema {
+    const bot = new SequencePlayer();
+    // Alternate teams in insertion order so the bot joins the smaller team
+    bot.teamId = this.initialPlayers.size % 2;
+    return bot;
+  }
+
+  protected createLobbyBotAgent(botId: string, difficulty: string): BotAgent {
+    return new SequenceBot(botId, {
+      difficulty: difficulty as "easy" | "medium" | "hard",
+    });
+  }
+
+  protected scheduleLobbyBotMoveIfNeeded(): void {
+    if (this.state.status !== "in_progress") return;
+
+    const currentId = this.state.currentTurnId;
+    const agent = this.lobbyBotAgents.get(currentId) as SequenceBot | undefined;
+    if (!agent) return;
+
+    const delay = 700 + Math.random() * 500;
+
+    this.clock.setTimeout(async () => {
+      if (this.state.status !== "in_progress") return;
+      if (this.state.currentTurnId !== currentId) return;
+
+      try {
+        const gameState = this.buildBotGameState();
+        const move = (await agent.getMove(gameState)) as {
+          cardIndex: number;
+          boardX: number;
+          boardY: number;
+        };
+
+        if (this.state.status !== "in_progress" || this.state.currentTurnId !== currentId) return;
+
+        const fakeClient = { sessionId: currentId, send: () => {} } as unknown as Client;
+        this.handleMoveMessage(fakeClient, move);
+      } catch (error) {
+        logger.error({ error, botId: currentId }, "Lobby bot move failed, making random move");
+        this.makeLobbyBotRandomMove(currentId);
+      }
+    }, delay);
+  }
+
+  private buildBotGameState(): unknown {
+    const players = new Map<string, unknown>();
+
+    for (const [id, player] of this.state.players) {
+      const p = player as SequencePlayer;
+      players.set(id, {
+        id: p.id,
+        teamId: p.teamId,
+        hand: Array.from(p.hand).map((c) => ({ rank: c.rank, suit: c.suit })),
+      });
+    }
+
+    return {
+      currentTurnId: this.state.currentTurnId,
+      players,
+      chips: Array.from(this.state.chips).map((c) => ({
+        x: c.x,
+        y: c.y,
+        teamId: c.teamId,
+        isPartOfSequence: c.isPartOfSequence,
+      })),
+      team1Sequences: this.state.team1Sequences,
+      team2Sequences: this.state.team2Sequences,
+    };
+  }
+
+  private makeLobbyBotRandomMove(botId: string): void {
+    const LAYOUT: string[][] = [
+      ["FREE", "2S", "3S", "4S", "5S", "6S", "7S", "8S", "9S", "FREE"],
+      ["6C", "5C", "4C", "3C", "2C", "AH", "KH", "QH", "10H", "10S"],
+      ["7C", "AS", "2D", "3D", "4D", "5D", "6D", "7D", "9H", "QS"],
+      ["8C", "KS", "6C", "5C", "4C", "3C", "2C", "8D", "8H", "KS"],
+      ["9C", "QS", "7C", "6H", "5H", "4H", "AH", "9D", "7H", "AS"],
+      ["10C", "10S", "8C", "7H", "2H", "3H", "KH", "10D", "6H", "2D"],
+      ["QC", "9S", "9C", "8H", "9H", "10H", "QH", "QD", "5H", "3D"],
+      ["KC", "8S", "10C", "QC", "KC", "AC", "AD", "KD", "4H", "4D"],
+      ["AC", "7S", "6S", "5S", "4S", "3S", "2S", "2H", "3H", "5D"],
+      ["FREE", "AD", "KD", "QD", "10D", "9D", "8D", "7D", "6D", "FREE"],
+    ];
+
+    const player = this.state.players.get(botId) as SequencePlayer;
+    if (!player || player.hand.length === 0) return;
+
+    for (let cardIndex = 0; cardIndex < player.hand.length; cardIndex++) {
+      const card = player.hand[cardIndex] as SequenceCard;
+      const suitChar =
+        card.suit === "hearts"
+          ? "H"
+          : card.suit === "diamonds"
+            ? "D"
+            : card.suit === "clubs"
+              ? "C"
+              : "S";
+      const cardStr = `${card.rank}${suitChar}`;
+
+      for (let y = 0; y < 10; y++) {
+        for (let x = 0; x < 10; x++) {
+          if (LAYOUT[y][x] === cardStr) {
+            const occupied = this.state.chips.some((c) => c.x === x && c.y === y);
+            if (!occupied) {
+              const fakeClient = { sessionId: botId, send: () => {} } as unknown as Client;
+              this.handleMoveMessage(fakeClient, { cardIndex, boardX: x, boardY: y });
+              return;
+            }
+          }
+        }
+      }
     }
   }
 

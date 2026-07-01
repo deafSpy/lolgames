@@ -126,7 +126,7 @@ function LobbyContent() {
       setIsCreating(false);
       const roomId = vsBot ? await createBotRoom(gameType, difficulty) : await createRoom(gameType);
       if (roomId) {
-        router.push(`/game/${roomId}`);
+        router.push(vsBot ? `/game/${roomId}?difficulty=${difficulty}` : `/game/${roomId}`);
       }
     },
     [createRoom, createBotRoom, router]
