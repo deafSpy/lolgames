@@ -38,11 +38,11 @@ module.exports = {
         // Performance score ≥ 80
         "categories:performance": ["error", { minScore: 0.8 }],
         // LCP < 2.5 s
-        "audits:largest-contentful-paint": ["error", { maxNumericValue: 2500 }],
+        "largest-contentful-paint": ["error", { maxNumericValue: 2500 }],
         // CLS < 0.1
-        "audits:cumulative-layout-shift": ["error", { maxNumericValue: 0.1 }],
+        "cumulative-layout-shift": ["error", { maxNumericValue: 0.1 }],
         // TBT < 200 ms (lab-measurable proxy for FID/INP)
-        "audits:total-blocking-time": ["error", { maxNumericValue: 200 }],
+        "total-blocking-time": ["error", { maxNumericValue: 200 }],
       },
     },
     upload: {
