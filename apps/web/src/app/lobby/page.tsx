@@ -98,6 +98,8 @@ function LobbyContent() {
   // Subscribe to real-time lobby updates via Server-Sent Events (SSE)
   useEffect(() => {
     console.log("Lobby: Subscribing to real-time updates");
+    // Initial fetch so rooms appear immediately without waiting for SSE open
+    fetchRooms();
     const unsubscribe = subscribeToLobby((connected) => {
       setIsConnected(connected);
     });
@@ -105,7 +107,7 @@ function LobbyContent() {
       console.log("Lobby: Unsubscribing from updates");
       unsubscribe();
     };
-  }, [subscribeToLobby]);
+  }, [subscribeToLobby, fetchRooms]);
 
   // Manual refresh handler
   const handleRefresh = useCallback(async () => {
@@ -146,36 +148,24 @@ function LobbyContent() {
     <div className="container mx-auto px-4 py-8">
       {/* Connection Error Toast */}
       {connectionError && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="fixed top-20 left-1/2 -translate-x-1/2 bg-error/90 text-white px-6 py-3 rounded-xl shadow-lg z-50"
-        >
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-error/90 text-white px-6 py-3 rounded-xl shadow-lg z-50">
           {connectionError}
-        </motion.div>
+        </div>
       )}
 
       {/* Slug-redirect error toast */}
       {errorParam && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="fixed top-20 left-1/2 -translate-x-1/2 bg-warning/90 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm"
-        >
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-warning/90 text-white px-6 py-3 rounded-xl shadow-lg z-50 text-sm">
           {errorParam === "full"
             ? `Room "${errorSlug}" is full.`
             : errorParam === "finished"
               ? `Room "${errorSlug}" has already finished.`
               : `Room "${errorSlug}" is unavailable.`}
-        </motion.div>
+        </div>
       )}
 
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8"
-      >
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-display font-bold">Game Lobby</h1>
           <p className="text-surface-400 mt-1">
@@ -231,7 +221,7 @@ function LobbyContent() {
             Create Room
           </Button>
         </div>
-      </motion.div>
+      </div>
 
       {/* Loading State */}
       {isLoadingRooms && availableRooms.length === 0 && (
@@ -281,12 +271,7 @@ function LobbyContent() {
 
       {/* Room List */}
       {!isLoadingRooms || availableRooms.length > 0 ? (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="space-y-3"
-        >
+        <div className="space-y-3">
           {availableRooms.filter((r) => gameFilter === null || r.gameType === gameFilter).length ===
           0 ? (
             <div className="card p-12 text-center">
@@ -322,21 +307,15 @@ function LobbyContent() {
             availableRooms
               .filter((r) => gameFilter === null || r.gameType === gameFilter)
               .map((room, index) => (
-                <motion.div
+                <RoomCard
                   key={room.roomId}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.05 * index }}
-                >
-                  <RoomCard
-                    room={room}
-                    onJoin={() => handleJoinRoom(room.roomId)}
-                    isJoining={isConnecting}
-                  />
-                </motion.div>
+                  room={room}
+                  onJoin={() => handleJoinRoom(room.roomId)}
+                  isJoining={isConnecting}
+                />
               ))
           )}
-        </motion.div>
+        </div>
       ) : null}
 
       {/* Create Room Modal */}
@@ -407,9 +386,17 @@ function RoomCard({
             </div>
           </div>
         </div>
-        {isInProgress && (
-          <span className="text-xs px-2 py-1 rounded-full bg-success/20 text-success border border-success/50">
-            In Progress
+        {isInProgress ? (
+          <span className="text-xs px-2 py-1 rounded-full bg-warning/20 text-warning border border-warning/30">
+            Live · Spectate
+          </span>
+        ) : isFull ? (
+          <span className="text-xs px-2 py-1 rounded-full bg-error/20 text-error border border-error/30">
+            Full
+          </span>
+        ) : (
+          <span className="text-xs px-2 py-1 rounded-full bg-success/20 text-success border border-success/30">
+            Open
           </span>
         )}
       </div>
@@ -466,10 +453,10 @@ function RoomCard({
             onClick={onJoin}
             variant={isInProgress ? "secondary" : isFull ? "ghost" : "primary"}
             size="sm"
-            disabled={isJoining}
+            disabled={isJoining || (!isInProgress && isFull)}
             isLoading={isJoining}
           >
-            {isInProgress ? "Spectate" : isFull ? "Full" : "Join"}
+            {isInProgress ? "Watch" : isFull ? "Full" : "Join"}
           </Button>
         </div>
       </div>

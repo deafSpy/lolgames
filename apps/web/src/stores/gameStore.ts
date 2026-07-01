@@ -29,6 +29,22 @@ const VALID_GAME_TYPES = new Set<string>(Object.values(GameType));
  * a valid GameType, so it must be stripped; any unknown value falls back to
  * CONNECT4 so the lobby never renders an undefined label/color.
  */
+/**
+ * Authoritative seat count per game type.
+ * Used to correct the lobby listing when the server returns maxClients=100
+ * (the spectator-inclusive cap) instead of the real game seat count.
+ */
+const GAME_MAX_PLAYERS: Record<string, number> = {
+  connect4: 2,
+  rps: 2,
+  quoridor: 4,
+  sequence: 4,
+  catan: 4,
+  splendor: 4,
+  monopoly_deal: 5,
+  blackjack: 7,
+};
+
 function normalizeGameType(rawGameType: unknown, roomName?: string): GameType {
   for (const candidate of [typeof rawGameType === "string" ? rawGameType : undefined, roomName]) {
     if (!candidate) continue;
@@ -76,7 +92,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   connectionError: null,
   roomSlug: null,
   availableRooms: [],
-  isLoadingRooms: false,
+  isLoadingRooms: true,
   playerId: null,
   playerName: `Guest_${Math.random().toString(36).substring(2, 6)}`,
 
@@ -103,7 +119,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           gameType,
           hostName: (room.metadata?.hostName as string) || "Unknown",
           playerCount: room.clients,
-          maxPlayers: room.maxClients,
+          maxPlayers:
+            GAME_MAX_PLAYERS[normalizeGameType(room.metadata?.gameType, room.name)] ??
+            room.maxClients,
           spectatorCount: room.spectatorCount ?? 0,
           status,
           createdAt: (room.metadata?.createdAt as number) || Date.now(),
@@ -136,7 +154,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           gameType,
           hostName: (room.metadata?.hostName as string) || "Unknown",
           playerCount: room.clients,
-          maxPlayers: room.maxClients,
+          maxPlayers:
+            GAME_MAX_PLAYERS[normalizeGameType(room.metadata?.gameType, room.name)] ??
+            room.maxClients,
           spectatorCount: room.spectatorCount ?? 0,
           status,
           createdAt: (room.metadata?.createdAt as number) || Date.now(),

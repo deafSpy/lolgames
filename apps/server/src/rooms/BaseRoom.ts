@@ -267,8 +267,14 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
 
       // Spectator if game already in progress OR all game seats are already claimed
       const seatsAreFull = this.initialPlayers.size >= this.maxPlayers;
-      player.isSpectator =
-        this.state.status === "in_progress" || (this.state.status === "waiting" && seatsAreFull);
+
+      // Reject spectators attempting to join a waiting room — they can only
+      // spectate games that have already started.
+      if (this.state.status === "waiting" && seatsAreFull) {
+        throw new Error("Room is full. You can only spectate games that have already started.");
+      }
+
+      player.isSpectator = this.state.status === "in_progress";
       player.wasInitialPlayer = !player.isSpectator;
       player.isHost = false; // Will be set below if first player
 
@@ -420,6 +426,24 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         lobbyService.playerLeft(this.roomId).catch((err) => {
           logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
         });
+
+        // If no real players remain in the waiting room, remove it from the lobby
+        // so it no longer appears in the game list.
+        const remainingRealPlayers = Array.from(this.state.players.values()).filter(
+          (p) => !p.isSpectator && !p.isBot
+        );
+        if (remainingRealPlayers.length === 0) {
+          lobbyService.deleteLobby(this.roomId).catch((err) => {
+            logger.warn(
+              { error: err, roomId: this.roomId },
+              "Failed to delete empty lobby from Redis"
+            );
+          });
+          logger.info(
+            { roomId: this.roomId },
+            "Last real player left waiting room — lobby removed"
+          );
+        }
       }
 
       this.scheduleEmptyRoomDisposal();
@@ -483,6 +507,18 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         lobbyService.playerLeft(this.roomId).catch((err) => {
           logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
         });
+        // Remove lobby from Redis if no real players remain after reconnect window expires
+        const remainingAfterExpiry = Array.from(this.state.players.values()).filter(
+          (p) => !p.isSpectator && !p.isBot
+        );
+        if (remainingAfterExpiry.length === 0) {
+          lobbyService.deleteLobby(this.roomId).catch((err) => {
+            logger.warn(
+              { error: err, roomId: this.roomId },
+              "Failed to delete empty lobby from Redis after reconnect expiry"
+            );
+          });
+        }
         this.scheduleEmptyRoomDisposal();
       }
       return;
