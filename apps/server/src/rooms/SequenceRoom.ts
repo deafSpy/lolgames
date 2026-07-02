@@ -2,6 +2,8 @@ import { Client } from "@colyseus/core";
 import { SequenceState, SequencePlayer, SequenceCard, SequenceChip } from "@multiplayer/shared";
 import { BaseRoom, type JoinOptions } from "./BaseRoom.js";
 import { logger } from "../logger.js";
+import { lobbyService } from "../services/lobbyService.js";
+import type { ParticipantIdentity } from "../services/historyService.js";
 import { SequenceBot } from "../bots/SequenceBot.js";
 import type { BotAgent } from "../bots/BotAgent.js";
 
@@ -63,12 +65,40 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
   }
 
   onJoin(client: Client, options: JoinOptions): void {
+    const existingPlayer = this.state.players.get(client.sessionId) as SequencePlayer | undefined;
+    if (existingPlayer) {
+      // Reconnect — restore connection state
+      existingPlayer.isConnected = true;
+      logger.info(
+        { roomId: this.roomId, playerId: client.sessionId },
+        "Player reconnected to Sequence"
+      );
+      return;
+    }
+
+    // StrictMode dedup: evict stale ghost slot for same browser session
+    if (options.browserSessionId) {
+      const priorSessionId = this.browserSessionToInitialPlayer.get(options.browserSessionId);
+      if (priorSessionId) {
+        const priorPlayer = this.state.players.get(priorSessionId);
+        if (!priorPlayer || !priorPlayer.isConnected) {
+          this.initialPlayers.delete(priorSessionId);
+          this.playerIdentities.delete(priorSessionId);
+          this.browserSessionToInitialPlayer.delete(options.browserSessionId);
+          if (priorPlayer && !priorPlayer.isConnected) {
+            this.state.players.delete(priorSessionId);
+          }
+        }
+      }
+    }
+
     const player = new SequencePlayer();
     player.id = client.sessionId;
     player.displayName = options.playerName || `Guest_${client.sessionId.slice(0, 4)}`;
     player.isReady = false;
     player.isConnected = true;
     player.joinedAt = Date.now();
+    player.isBot = false;
     player.isHost = false;
 
     // Spectator if game already started or all seats are taken
@@ -88,6 +118,27 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       }
       // Register in initialPlayers so startGame/nextTurn can cycle through them
       this.initialPlayers.add(client.sessionId);
+      if (options.browserSessionId) {
+        this.browserSessionToInitialPlayer.set(options.browserSessionId, client.sessionId);
+      }
+
+      // Register stable identity for history
+      const identity: ParticipantIdentity = {
+        identity: options.userId
+          ? `user:${options.userId}`
+          : options.browserSessionId
+            ? `guest:${options.browserSessionId}`
+            : `guest:${client.sessionId}`,
+        displayName: player.displayName,
+        userId: options.userId,
+        browserSessionId: options.browserSessionId,
+        isBot: false,
+      };
+      this.playerIdentities.set(client.sessionId, identity);
+
+      lobbyService.playerJoined(this.roomId).catch((err) => {
+        logger.warn({ error: err, roomId: this.roomId }, "Failed to update lobby in Redis");
+      });
     }
 
     this.state.players.set(client.sessionId, player);
@@ -96,6 +147,18 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       { roomId: this.roomId, playerId: client.sessionId, teamId: player.teamId, isSpectator },
       "Player joined Sequence"
     );
+
+    // Delayed room_info so the message arrives after the JOIN_ROOM acknowledgment
+    if (this.roomSlug) {
+      const slug = this.roomSlug;
+      this.clock.setTimeout(() => {
+        try {
+          client.send("room_info", { roomSlug: slug });
+        } catch {
+          // Client disconnected during handshake window — no-op
+        }
+      }, 250);
+    }
 
     if (this.clients.length >= this.maxPlayers) {
       this.lock();
@@ -200,6 +263,9 @@ export class SequenceRoom extends BaseRoom<SequenceState> {
       // Remove the chip
       const chipIndex = this.state.chips.indexOf(existingChip);
       this.state.chips.splice(chipIndex, 1);
+      // Recount sequences for both teams since the opponent's chip was removed
+      this.checkSequences(0);
+      this.checkSequences(1);
     } else if (isTwoEyedJack) {
       // Two-eyed jack places chip anywhere
       if (existingChip) {

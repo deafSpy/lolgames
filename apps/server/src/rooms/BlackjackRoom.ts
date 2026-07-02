@@ -185,6 +185,10 @@ export class BlackjackRoom extends BaseRoom<BlackjackState> {
     this.playerOrder = Array.from(this.state.players.keys());
     this.state.playersRemaining = this.playerOrder.length;
 
+    // Populate initialPlayers so BaseRoom.handlePlayerForfeit and history recording
+    // can correctly identify participants (Blackjack bypasses BaseRoom.onJoin).
+    this.initialPlayers = new Set(this.playerOrder);
+
     // First player is button
     this.state.buttonPlayerId = this.playerOrder[0];
 

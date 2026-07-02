@@ -891,6 +891,15 @@ export class MonopolyDealRoom extends BaseRoom<MonopolyDealState> {
       return;
     }
 
+    // Validate that targetColor is one of the colors this rent card covers
+    const cardColors = Array.from(card.colors);
+    if (cardColors.length > 0 && !cardColors.includes(data.targetColor)) {
+      client.send("error", {
+        message: `This rent card cannot be used for ${data.targetColor} properties`,
+      });
+      return;
+    }
+
     // Check player has properties of that color
     let rentPropertySet: MonopolyDealPropertySetSchema | null = null;
     for (const ps of player.propertySets) {

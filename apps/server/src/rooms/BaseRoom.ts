@@ -631,8 +631,25 @@ export abstract class BaseRoom<TState extends BaseGameState> extends Room<TState
         "Room was created but never had players, disposing immediately"
       );
       this.disconnect();
+      return;
     }
-    // If the room has had initial players, keep it alive for potential reconnections
+
+    // If the room had players but is now empty and still waiting, dispose after a timeout
+    // to prevent abandoned waiting rooms from lingering indefinitely.
+    if (this.state.status === "waiting" && this.clients.length === 0) {
+      logger.info(
+        { roomId: this.roomId, disposeTimeoutMs: config.game.roomDisposeTimeout },
+        "Waiting room is empty, scheduling disposal"
+      );
+      this.clock.setTimeout(() => {
+        if (this.clients.length === 0 && this.state.status === "waiting") {
+          logger.info({ roomId: this.roomId }, "Disposing empty waiting room after timeout");
+          this.disconnect();
+        }
+      }, config.game.roomDisposeTimeout);
+    }
+    // If the room has had initial players and is in_progress or finished, keep it alive for
+    // potential reconnections (handled by the reconnect window in onLeave).
   }
 
   async onDispose(): Promise<void> {
