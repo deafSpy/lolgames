@@ -67,7 +67,7 @@ const TIER1_CARDS: Array<{
   { gemType: "black", points: 1, cost: { red: 3 } },
   { gemType: "black", points: 1, cost: { green: 2, red: 1 } },
   { gemType: "black", points: 1, cost: { green: 2, red: 2 } },
-  { gemType: "black", points: 0, cost: { white: 1 } },
+  { gemType: "black", points: 0, cost: { white: 2, blue: 2 } },
   // Blue cards
   { gemType: "blue", points: 0, cost: { black: 1 } },
   { gemType: "blue", points: 0, cost: { red: 1, black: 1 } },
@@ -1149,24 +1149,37 @@ export class SplendorRoom extends BaseRoom<SplendorState> {
   }
 
   checkWinCondition(): { winner: string | null; isDraw: boolean } | null {
-    // Game ends when someone reaches 15 points
-    // But we finish the round so everyone gets equal turns
-    let leader: { id: string; points: number } | null = null;
+    // Game ends when someone reaches 15 points.
+    // All remaining players in the current round get to finish, then highest points wins.
+    // We use roundEndTriggered to track when the threshold has been crossed.
 
-    for (const [playerId, player] of this.state.players) {
+    // Check if any player has reached the points threshold
+    for (const [, player] of this.state.players) {
       const p = player as SplendorPlayerSchema;
       if (p.points >= this.state.pointsToWin) {
-        if (!leader || p.points > leader.points) {
-          leader = { id: playerId, points: p.points };
-        }
+        this.state.roundEndTriggered = true;
+        break;
       }
     }
 
-    if (leader) {
-      // Check if we've completed the round (returned to first player)
+    if (this.state.roundEndTriggered) {
+      // Wait until the round comes back to the first player (everyone had equal turns)
       const playerIds = Array.from(this.state.players.keys());
       if (this.state.currentTurnId === playerIds[0]) {
-        return { winner: leader.id, isDraw: false };
+        // Find the leader: most prestige points, fewest cards as tiebreak
+        let leader: { id: string; points: number; cardCount: number } | null = null;
+        for (const [playerId, player] of this.state.players) {
+          const p = player as SplendorPlayerSchema;
+          if (!leader) {
+            leader = { id: playerId, points: p.points, cardCount: p.cards.length };
+          } else if (
+            p.points > leader.points ||
+            (p.points === leader.points && p.cards.length < leader.cardCount)
+          ) {
+            leader = { id: playerId, points: p.points, cardCount: p.cards.length };
+          }
+        }
+        return leader ? { winner: leader.id, isDraw: false } : null;
       }
     }
 

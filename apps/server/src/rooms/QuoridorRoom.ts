@@ -33,52 +33,38 @@ export class QuoridorRoom extends BaseRoom<QuoridorState> {
   }
 
   onJoin(client: Client, options: JoinOptions): void {
-    // Determine spectator status before adding to players map
-    const seatsAreFull = this.initialPlayers.size >= this.maxPlayers;
-    const isSpectator =
-      this.state.status === "in_progress" || (this.state.status === "waiting" && seatsAreFull);
+    // Capture seat count BEFORE super.onJoin so we know the player's position
+    const realPlayerCount = this.initialPlayers.size;
 
-    const player = new QuoridorPlayer();
-    player.id = client.sessionId;
-    player.displayName = options.playerName || `Guest_${client.sessionId.slice(0, 4)}`;
-    player.isReady = false;
-    player.isConnected = true;
-    player.joinedAt = Date.now();
-    player.isSpectator = isSpectator;
-    player.wasInitialPlayer = !isSpectator;
+    // Let BaseRoom handle player creation, host assignment, initialPlayers tracking,
+    // lobby updates, and checkStartGame()
+    super.onJoin(client, options);
 
-    if (!isSpectator) {
-      // Assign starting position based on existing real-player count (excludes spectators)
-      const realPlayerCount = this.initialPlayers.size;
-      const start = QUORIDOR_STARTS[Math.min(realPlayerCount, QUORIDOR_STARTS.length - 1)];
-      player.x = start.x;
-      player.y = start.y;
-      player.goalRow = start.goalRow;
-      player.wallsRemaining = 10;
-
-      if (this.initialPlayers.size === 0 && this.state.status === "waiting") {
-        this.hostSessionId = client.sessionId;
-        player.isHost = true;
-      }
-      this.initialPlayers.add(client.sessionId);
+    // Now set Quoridor-specific fields on the player that super created
+    const player = this.state.players.get(client.sessionId) as QuoridorPlayer;
+    if (!player || player.isSpectator) {
+      // Spectators don't need board positions
+      return;
     }
 
-    this.state.players.set(client.sessionId, player);
+    const start = QUORIDOR_STARTS[Math.min(realPlayerCount, QUORIDOR_STARTS.length - 1)];
+    player.x = start.x;
+    player.y = start.y;
+    player.goalRow = start.goalRow;
+    player.wallsRemaining = this.maxPlayers <= 2 ? 10 : 5;
 
     logger.info(
       {
         roomId: this.roomId,
         playerId: client.sessionId,
         playerName: player.displayName,
-        isSpectator,
+        x: player.x,
+        y: player.y,
+        goalRow: player.goalRow,
+        wallsRemaining: player.wallsRemaining,
       },
-      "Player joined Quoridor"
+      "Quoridor player position assigned"
     );
-
-    // Send room slug to the joining client
-    if (this.roomSlug) {
-      client.send("room_info", { roomSlug: this.roomSlug });
-    }
   }
 
   handleMove(client: Client, data: unknown): void {

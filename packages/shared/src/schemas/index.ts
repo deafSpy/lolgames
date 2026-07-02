@@ -288,6 +288,7 @@ export class SplendorState extends Schema {
   // Phase for discard/noble selection
   @type("string") phase: string = "take_gems"; // take_gems, buy_or_reserve, discard_gems, select_noble
   @type("number") pointsToWin: number = 15;
+  @type("boolean") roundEndTriggered: boolean = false;
 }
 
 /**

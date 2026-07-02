@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import SlugResolverClient from "./SlugResolverClient";
 
@@ -13,14 +14,6 @@ function isRoomSlug(id: string): boolean {
 }
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
-import { Connect4Board } from "@/components/games/Connect4Board";
-import { RPSGame } from "@/components/games/RPSGame";
-import { QuoridorBoard } from "@/components/games/QuoridorBoard";
-import { SequenceBoard } from "@/components/games/SequenceBoard";
-import { CatanBoard } from "@/components/games/CatanBoard";
-import { SplendorBoard } from "@/components/games/SplendorBoard";
-import { MonopolyDealBoard } from "@/components/games/MonopolyDealBoard";
-import { BlackjackBoard } from "@/components/games/BlackjackBoard";
 import {
   PlayerInfoSkeleton,
   Connect4Skeleton,
@@ -47,6 +40,49 @@ import {
 import { GameType, RPSChoice } from "@multiplayer/shared";
 import type { Room } from "colyseus.js";
 import type { Schema } from "@colyseus/schema";
+
+const Connect4Board = dynamic(
+  () => import("@/components/games/Connect4Board").then((mod) => mod.Connect4Board),
+  { ssr: false, loading: () => <GenericGameSkeleton /> }
+);
+
+const RPSGame = dynamic(() => import("@/components/games/RPSGame").then((mod) => mod.RPSGame), {
+  ssr: false,
+  loading: () => <GenericGameSkeleton />,
+});
+
+const QuoridorBoard = dynamic(
+  () => import("@/components/games/QuoridorBoard").then((mod) => mod.QuoridorBoard),
+  { ssr: false, loading: () => <GenericGameSkeleton /> }
+);
+
+const SequenceBoard = dynamic(
+  () => import("@/components/games/SequenceBoard").then((mod) => mod.SequenceBoard),
+  { ssr: false, loading: () => <GenericGameSkeleton /> }
+);
+
+const CatanBoard = dynamic(
+  () => import("@/components/games/CatanBoard").then((mod) => mod.CatanBoard),
+  {
+    ssr: false,
+    loading: () => <GenericGameSkeleton />,
+  }
+);
+
+const SplendorBoard = dynamic(
+  () => import("@/components/games/SplendorBoard").then((mod) => mod.SplendorBoard),
+  { ssr: false, loading: () => <GenericGameSkeleton /> }
+);
+
+const MonopolyDealBoard = dynamic(
+  () => import("@/components/games/MonopolyDealBoard").then((mod) => mod.MonopolyDealBoard),
+  { ssr: false, loading: () => <GenericGameSkeleton /> }
+);
+
+const BlackjackBoard = dynamic(
+  () => import("@/components/games/BlackjackBoard").then((mod) => mod.BlackjackBoard),
+  { ssr: false, loading: () => <GenericGameSkeleton /> }
+);
 
 interface PlayerInfo {
   id: string;
@@ -226,6 +262,7 @@ export default function GameRoomPage() {
   const searchParams = useSearchParams();
   const botDifficulty = searchParams.get("difficulty") as "easy" | "medium" | "hard" | null;
   const roomId = params.roomId as string;
+  const isDemoRoom = roomId === "demo-room";
 
   const {
     playerName,
@@ -239,8 +276,10 @@ export default function GameRoomPage() {
   const [room, setRoom] = useState<Room<Schema> | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [gameType, setGameType] = useState<GameType | null>(null);
-  const [isConnecting, setIsConnecting] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(!isDemoRoom);
+  const [error, setError] = useState<string | null>(
+    isDemoRoom ? "This room does not exist or has been closed." : null
+  );
   const [disconnectedCode, setDisconnectedCode] = useState<number | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [isReplaying, setIsReplaying] = useState(false);
@@ -489,6 +528,11 @@ export default function GameRoomPage() {
     const CONNECTION_TIMEOUT_MS = 10_000; // surface error instead of hanging indefinitely
 
     async function connectToRoom() {
+      if (isDemoRoom) {
+        setIsConnecting(false);
+        return;
+      }
+
       setIsConnecting(true);
       setError(null);
       setReconnectAttempts(0);
@@ -531,8 +575,10 @@ export default function GameRoomPage() {
           return;
         }
 
-        // Get auth user ID if signed in
-        const authUserId = useAuthStore.getState().user?.id;
+        // Get auth user ID and display name if signed in
+        const authUser = useAuthStore.getState().user;
+        const authUserId = authUser?.id;
+        const effectivePlayerName = authUser?.displayName || playerName;
         const browserSessionId = getBrowserSessionId();
 
         // Per-room reconnect token (primary path — survives navigation + unmount).
@@ -587,7 +633,11 @@ export default function GameRoomPage() {
 
         if (!currentRoom) {
           currentRoom = await Promise.race([
-            joinById(roomId, { playerName, userId: authUserId, browserSessionId }),
+            joinById(roomId, {
+              playerName: effectivePlayerName,
+              userId: authUserId,
+              browserSessionId,
+            }),
             new Promise<never>((_, reject) =>
               setTimeout(
                 () => reject(new Error("Could not connect to room. It may no longer exist.")),
@@ -703,7 +753,7 @@ export default function GameRoomPage() {
         }
       }
     };
-  }, [roomId, playerName, router]);
+  }, [roomId, playerName, router, isDemoRoom]);
 
   const resolvedGameType = gameType || normalizeGameType(room?.name);
   const isBotRoom = room?.name?.includes("_bot") || false;
@@ -1015,16 +1065,12 @@ export default function GameRoomPage() {
     <div className="container mx-auto px-2 sm:px-4 py-4 sm:py-8">
       {/* Error toast */}
       {error && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="fixed top-20 left-1/2 -translate-x-1/2 bg-error/90 text-white px-6 py-3 rounded-xl shadow-lg z-50"
-        >
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-error/90 text-white px-6 py-3 rounded-xl shadow-lg z-50">
           {error}
-        </motion.div>
+        </div>
       )}
 
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+      <div>
         {/* Header */}
         <div className="mb-8 flex items-center justify-between">
           <div>
@@ -1182,7 +1228,9 @@ export default function GameRoomPage() {
                               ? botDifficulty
                                 ? `${botDifficulty.charAt(0).toUpperCase() + botDifficulty.slice(1)} difficulty`
                                 : "Bot"
-                              : "You"}
+                              : player.id === playerId
+                                ? "You"
+                                : "Player"}
                           </p>
                         </div>
                         {player.isBot && (
@@ -1190,7 +1238,7 @@ export default function GameRoomPage() {
                             Bot
                           </span>
                         )}
-                        {!player.isBot && (
+                        {!player.isBot && player.id === playerId && (
                           <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-300 flex-shrink-0">
                             You
                           </span>
@@ -1425,11 +1473,7 @@ export default function GameRoomPage() {
 
           {/* Game content - when loaded and in progress or finished */}
           {(isPlaying || isFinished) && gameState && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, ease: "easeOut" }}
-            >
+            <div>
               {/* Connect 4 */}
               {resolvedGameType === GameType.CONNECT4 && (
                 <>
@@ -1594,7 +1638,7 @@ export default function GameRoomPage() {
                   onAction={handleBlackjackAction}
                 />
               )}
-            </motion.div>
+            </div>
           )}
 
           {/* Victory overlay modal — dismissible, shows game behind */}
@@ -1775,7 +1819,7 @@ export default function GameRoomPage() {
             </Button>
           </div>
         )}
-      </motion.div>
+      </div>
 
       {/* Chat toggle button */}
       <button

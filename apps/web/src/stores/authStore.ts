@@ -161,5 +161,12 @@ export const useAuthStore = create<AuthState>((set) => ({
       console.warn("Sign out failed", error);
     }
     set({ user: null, token: null });
+    // Clear all lolgames session/reconnect tokens so the next user doesn't
+    // inherit the previous user's room sessions.
+    if (typeof window !== "undefined") {
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith("lolgames_"))
+        .forEach((key) => localStorage.removeItem(key));
+    }
   },
 }));

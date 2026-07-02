@@ -207,32 +207,43 @@ export class QuoridorBotRoom extends QuoridorRoom {
   }
 
   /**
-   * Easy AI: Random valid pawn moves, no wall placement
+   * Easy AI: Random valid pawn moves + 20% chance of a random wall
    */
-  private easyAI(bot: QuoridorPlayer): { type: "move"; x: number; y: number } {
-    const moves = this.getValidPawnMoves(bot);
-    if (moves.length === 0) {
-      // Fallback: stay in place (shouldn't happen)
-      return { type: "move", x: bot.x, y: bot.y };
+  private easyAI(
+    bot: QuoridorPlayer
+  ):
+    | { type: "move"; x: number; y: number }
+    | { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } {
+    if (bot.wallsRemaining > 0 && Math.random() < 0.2) {
+      const wall = this.findRandomWall();
+      if (wall) return wall;
     }
-    // Random move
+    const moves = this.getValidPawnMoves(bot);
+    if (moves.length === 0) return { type: "move", x: bot.x, y: bot.y };
     const move = moves[Math.floor(Math.random() * moves.length)];
     return { type: "move", x: move.x, y: move.y };
   }
 
   /**
-   * Medium AI: Move toward goal using shortest path, no walls
+   * Medium AI: Move toward goal via shortest path + 30% chance of a beneficial wall
    */
-  private mediumAI(bot: QuoridorPlayer): { type: "move"; x: number; y: number } {
-    const moves = this.getValidPawnMoves(bot);
-    if (moves.length === 0) {
-      return { type: "move", x: bot.x, y: bot.y };
+  private mediumAI(
+    bot: QuoridorPlayer
+  ):
+    | { type: "move"; x: number; y: number }
+    | { type: "wall"; x: number; y: number; orientation: "horizontal" | "vertical" } {
+    if (bot.wallsRemaining > 0 && Math.random() < 0.3) {
+      const opponent = this.getOpponent(bot.id) as QuoridorPlayer | null;
+      if (opponent) {
+        const wall = this.findBestWall(bot, opponent);
+        if (wall) return wall;
+      }
     }
+    const moves = this.getValidPawnMoves(bot);
+    if (moves.length === 0) return { type: "move", x: bot.x, y: bot.y };
 
-    // Find move that gets closest to goal
     let bestMove = moves[0];
     let bestDist = this.getShortestPathLength(moves[0].x, moves[0].y, bot.goalRow);
-
     for (const move of moves) {
       const dist = this.getShortestPathLength(move.x, move.y, bot.goalRow);
       if (dist < bestDist) {
@@ -240,8 +251,30 @@ export class QuoridorBotRoom extends QuoridorRoom {
         bestMove = move;
       }
     }
-
     return { type: "move", x: bestMove.x, y: bestMove.y };
+  }
+
+  /** Picks a random valid wall placement (used by easy AI) */
+  private findRandomWall(): {
+    type: "wall";
+    x: number;
+    y: number;
+    orientation: "horizontal" | "vertical";
+  } | null {
+    const size = this.state.boardSize - 1;
+    const candidates: { x: number; y: number; orientation: "horizontal" | "vertical" }[] = [];
+    for (let x = 0; x < size; x++) {
+      for (let y = 0; y < size; y++) {
+        for (const orientation of ["horizontal", "vertical"] as const) {
+          if (this.isWallPlacementValid(x, y, orientation)) {
+            candidates.push({ x, y, orientation });
+          }
+        }
+      }
+    }
+    if (candidates.length === 0) return null;
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    return { type: "wall", ...pick };
   }
 
   /**
